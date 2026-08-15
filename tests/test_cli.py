@@ -1,4 +1,5 @@
 import io
+import json
 import sys
 import pytest
 from battle import cli
@@ -58,6 +59,34 @@ def test_npc_act_missing_combatant_continues(tmp_path, monkeypatch):
     out = run_cli("npc-act", "-c", CAMP, "不存在者:attack 哥布林1; 哥布林1:dodge")
     assert "不存在者" in out  # 缺失战斗员的拒绝原因被打印
     assert "哥布林1" in out   # 批次未中断，后续 token 正常结算
+
+
+def test_undo_rolls_back_attack_hp(tmp_path, monkeypatch):
+    """Critical regression: undo 必须真正回滚 HP。此前 push_undo 在状态变更
+    之后执行 → 快照=变更后状态，undo 是空转，且 restore 清空历史栈。"""
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "10x8")
+    run_cli("add-player", "-c", CAMP, "--name", "星沢羽", "--ac", "16", "--hp", "17",
+            "--speed", "30", "--dex-mod", "2", "--attack", "短弓:+5:1d6+3:穿刺:80/320")
+    run_cli("add-monster", "-c", CAMP, "--name", "哥布林1", "--monster", "goblin")
+    run_cli("place", "-c", CAMP, "--name", "星沢羽", "--x", "0", "--y", "0")
+    run_cli("place", "-c", CAMP, "--name", "哥布林1", "--x", "0", "--y", "3")
+    run_cli("init", "-c", CAMP)
+    out = run_cli("start", "-c", CAMP)
+    if "星沢羽" not in out:  # 星沢羽未先手 → 推进到她的回合
+        run_cli("next-turn", "-c", CAMP)
+    hp_before = json.loads(run_cli("state", "-c", CAMP, "--json"))["combatants"]["哥布林1"]["hp"]
+    out = run_cli("attack", "-c", CAMP, "--actor", "星沢羽", "--target", "哥布林1",
+                  "--inject", "15")
+    assert "命中" in out
+    hp_after = json.loads(run_cli("state", "-c", CAMP, "--json"))["combatants"]["哥布林1"]["hp"]
+    assert hp_after < hp_before
+    out = run_cli("undo", "-c", CAMP)
+    assert "回滚" in out
+    hp_restored = json.loads(run_cli("state", "-c", CAMP, "--json"))["combatants"]["哥布林1"]["hp"]
+    assert hp_restored == hp_before  # 核心断言：undo 真正回滚而非空转
+    out = run_cli("undo", "-c", CAMP)
+    assert "没有可回滚的操作" in out  # 栈已空 → 第二次 undo 优雅拒绝
 
 
 def test_undo_stack_persistable_after_push(tmp_path, monkeypatch):

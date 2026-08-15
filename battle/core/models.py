@@ -217,10 +217,10 @@ class Encounter:
         return self.to_dict()
 
     def restore(self, snap: dict) -> None:
-        """Restore from a snapshot dict (undo). Rebuilds in place."""
+        """Restore from a snapshot dict (undo). Rebuilds in place.
+        快照内嵌恢复时刻的历史栈拷贝 → 弹顶恢复后剩余历史保留，可连续多次 undo。"""
         fresh = Encounter.from_dict(snap)
         self.__dict__.update(fresh.__dict__)
-        self.undo_stack = []
 
     def push_undo(self) -> None:
         self.undo_stack.append(self.to_dict())

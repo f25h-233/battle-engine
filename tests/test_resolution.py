@@ -31,6 +31,25 @@ def test_attack_out_of_range_rejected():
         R.resolve_attack(enc, cpc.id, cg1.id, DAGGER)  # 匕首近战, 目标 25ft
 
 
+def test_consecutive_undo_rolls_back_each_action():
+    """Critical: undo 可连续回滚——restore 不得清空历史栈（此前弹顶后栈被清空）。"""
+    enc, cpc, cg1, cg2 = enc_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    hp0 = cg1.hp
+    R.resolve_attack(enc, cpc.id, cg1.id, BOW, injected_d20=15)
+    assert cg1.hp < hp0
+    for _ in range(len(enc.turn_order)):  # 推进一整圈 → 回到星沢羽且 acted 已重置
+        enc.next_turn()
+    R.resolve_attack(enc, cpc.id, cg2.id, BOW, injected_d20=15)
+    assert cg2.hp < cg2.actor.max_hp
+    assert enc.pop_undo()
+    # restore 重建 combatants 对象 → 必须按 id 重新取（旧引用指向被替换的对象）
+    assert enc.combatants[cg2.id].hp == cg2.actor.max_hp  # 第二次攻击被回滚
+    assert enc.pop_undo()
+    assert enc.combatants[cg1.id].hp == hp0               # 历史栈保留 → 第一次也可回滚
+
+
 def test_attack_hit_applies_damage():
     enc, cpc, cg1, cg2 = enc_factory()
     enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)

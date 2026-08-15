@@ -122,6 +122,8 @@ def resolve_attack(enc, attacker_id: str, target_id: str,
                 f"{attack.name} 射程 {attack.max_range_ft()}ft，实际距离 {dist}ft —— 射程外")
         r.add(f"射程检查: {attack.name} {attack.max_range_ft()}ft vs 距离 {dist}ft ✓")
 
+    enc.push_undo()  # 快照必须在首个状态变更之前 → undo 才能真正回滚
+
     adv = collect_advantage(enc, attacker_id, target_id, attack, advantage)
     roll = dice.roll_d20(attack.attack_bonus or 0, advantage=(
         "advantage" if adv["advantage"] and not adv["disadvantage"]
@@ -154,7 +156,6 @@ def resolve_attack(enc, attacker_id: str, target_id: str,
 
     enc.record(action="attack", attacker=attacker_id, target=target_id,
                attack=attack.name, lines=r.lines)
-    enc.push_undo()
     return r
 
 
@@ -178,6 +179,7 @@ def resolve_spell(enc, caster_id: str, spell_name: str, targets: list,
                              injected_d20=injected_d20, force=force)
         sub.lines.insert(0, f"施法 {spell_name}")
         return sub
+    enc.push_undo()  # 豁免路径自己 push（首个状态变更之前）
     r.hp_before = _snapshot_hp(enc, *targets)
     for tid in targets:
         t = enc.combatants[tid]
@@ -191,7 +193,6 @@ def resolve_spell(enc, caster_id: str, spell_name: str, targets: list,
     r.hp_after = {tid: enc.combatants[tid].hp for tid in targets}
     enc.record(action="cast", caster=caster_id, spell=spell_name,
                targets=targets, lines=r.lines)
-    enc.push_undo()
     return r
 
 
@@ -208,12 +209,12 @@ def resolve_move(enc, combatant_id: str, dest, *, force: bool = False) -> Resolu
         raise ActionError(f"移动 {dx}ft 超出剩余移动力 {c.movement_left_ft}ft")
     if c.acted:
         raise ActionError(f"{c.id} 本回合已用动作")
+    enc.push_undo()  # 首个状态变更之前
     r = ResolutionResult()
     r.add(f"{c.id} 移动 {dx}ft → ({dest[0]},{dest[1]})")
     c.movement_left_ft -= dx
     c.x, c.y = dest
     enc.record(action="move", combatant=combatant_id, dest=list(dest), lines=r.lines)
-    enc.push_undo()
     return r
 
 
@@ -228,13 +229,13 @@ def resolve_dash(enc, combatant_id: str, dest) -> ResolutionResult:
     dx = (abs(dest[0] - c.x) + abs(dest[1] - c.y)) * enc.map.grid_size_ft
     if dx > speed:
         raise ActionError(f"冲刺移动 {dx}ft 超出速度 {speed}ft")
+    enc.push_undo()  # 首个状态变更之前
     r = ResolutionResult()
     r.add(f"{c.id} 冲刺 {dx}ft → ({dest[0]},{dest[1]})（动作已用）")
     c.x, c.y = dest
     c.acted = True
     c.movement_left_ft = 0
     enc.record(action="dash", combatant=combatant_id, dest=list(dest), lines=r.lines)
-    enc.push_undo()
     return r
 
 
@@ -243,11 +244,11 @@ def resolve_dodge(enc, combatant_id: str) -> ResolutionResult:
     c = enc.combatants[combatant_id]
     if c.acted:
         raise ActionError(f"{c.id} 本回合已用动作")
+    enc.push_undo()  # 首个状态变更之前
     r = ResolutionResult()
     r.add(f"{c.id} 闪避（本回合攻击劣势）")
     c.acted = True
     enc.record(action="dodge", combatant=combatant_id, lines=r.lines)
-    enc.push_undo()
     return r
 
 
@@ -256,11 +257,11 @@ def resolve_disengage(enc, combatant_id: str) -> ResolutionResult:
     c = enc.combatants[combatant_id]
     if c.acted:
         raise ActionError(f"{c.id} 本回合已用动作")
+    enc.push_undo()  # 首个状态变更之前
     r = ResolutionResult()
     r.add(f"{c.id} 脱离（本回合移动不触发借机攻击）")
     c.acted = True
     enc.record(action="disengage", combatant=combatant_id, lines=r.lines)
-    enc.push_undo()
     return r
 
 
@@ -283,6 +284,7 @@ def resolve_death_save(enc, combatant_id: str,
     c = enc.combatants[combatant_id]
     if c.hp > 0:
         raise ActionError(f"{c.id} 尚未倒下")
+    enc.push_undo()  # 首个状态变更之前
     d20 = dice.roll_d20(injected=injected_d20)
     r = ResolutionResult()
     if d20["d20"] == 20:
