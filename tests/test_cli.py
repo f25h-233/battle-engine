@@ -210,3 +210,26 @@ def test_cli_inject_out_of_range(capsys, tmp_path, monkeypatch):
     out = run_cli("attack", "-c", CAMP, "--actor", "星沢羽", "--target", "哥布林1",
                   "--inject", "99")
     assert "1–20" in out               # 注入校验文案
+
+
+def test_end_award_xp_twice_no_double_award(capsys, tmp_path, monkeypatch):
+    """Regression (终审 I-2): end --award-xp 重复执行会把 XP 二次写入人物卡——
+    第二次 end 必须在回写前拒绝（spec §10 不得静默重解释）。"""
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "10x8")
+    run_cli("add-player", "-c", CAMP, "--name", "法师", "--ac", "13", "--hp", "20")
+    run_cli("add-monster", "-c", CAMP, "--name", "哥布林1", "--monster", "goblin")
+    run_cli("place", "-c", CAMP, "--name", "法师", "--x", "0", "--y", "0")
+    run_cli("place", "-c", CAMP, "--name", "哥布林1", "--x", "3", "--y", "0")
+    run_cli("init", "-c", CAMP)
+    run_cli("start", "-c", CAMP)
+    run_cli("set-hp", "-c", CAMP, "--actor", "哥布林1", "--hp", "0")  # 消灭哥布林
+    sheet = tmp_path / "campaigns" / CAMP / "characters" / "法师.md"
+    sheet.parent.mkdir(parents=True)
+    sheet.write_text("- **经验:** 0 / 300\n", encoding="utf-8")
+    out1 = run_cli("end", "-c", CAMP, "--award-xp")
+    assert "经验值" in out1             # 第一次：正常发放（0 + 哥布林 50 XP）
+    assert "**经验:** 50 / 300" in sheet.read_text(encoding="utf-8")
+    out2 = run_cli("end", "-c", CAMP, "--award-xp")
+    assert "已结束" in out2             # 第二次：拒绝，不静默重解释
+    assert "**经验:** 50 / 300" in sheet.read_text(encoding="utf-8")  # 未二次加 XP

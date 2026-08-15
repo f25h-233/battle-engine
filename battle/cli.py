@@ -337,6 +337,9 @@ def cmd_next_turn(enc: Encounter) -> None:
 
 
 def cmd_end(enc: Encounter, args) -> None:
+    if enc.status == "ended":
+        # spec §10：重复 end 不得静默重解释——拦截在 enc.end()/回写之前，二次运行零变更
+        raise ActionError("战斗已结束——不可重复结束（避免重复发放 XP）")
     enc.end()
     print(f"  战斗结束。共 {enc.round} 回合，{len(enc.log)} 条动作日志。")
     _save(enc)

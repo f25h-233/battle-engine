@@ -259,8 +259,10 @@ function renderActions() {
     `${downed && myTurn() ? "" : "disabled"}>死亡豁免（成${who ? who.death_saves.successes : 0}` +
     `/败${who ? who.death_saves.failures : 0}）</button>`;
   mb.innerHTML += `<button data-action="undo">撤销</button>`;
-  if (who && selAttack && pendingCenter && S) {
-    const atk = (who.attacks || []).find((a) => a.name === selAttack);
+  // 仅当前选中攻击本身是 AoE 时才显示「施放」——否则陈旧 pendingCenter
+  // 会把非 AoE 攻击渲染成假 AoE 按钮（M3 终审 I-1）
+  const aoeAtk = who && selAttack ? (who.attacks || []).find((a) => a.name === selAttack) : null;
+  if (aoeAtk && aoeAtk.aoe_radius_ft && pendingCenter && S) {
     mb.innerHTML += `<button data-action="cast_aoe" data-name="${selAttack}" class="primary">施放 ${selAttack} @(${pendingCenter[0]},${pendingCenter[1]})</button>`;
     mb.innerHTML += `<button data-action="cancel_aoe">取消 AoE</button>`;
   }
@@ -296,6 +298,7 @@ function registerHandlers() {
         renderGrid();
         return;
       }
+      pendingCenter = null;                 // 非 AoE 攻击：清掉陈旧 AoE 中心，防误「施放」（M3 终审 I-1）
       const tgt = selected && S.combatants[selected];
       if (tgt && tgt.id !== identity && tgt.hp > 0) {
         postAction(act, { target: tgt.id, attack: name });
