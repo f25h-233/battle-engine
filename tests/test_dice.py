@@ -24,9 +24,10 @@ def test_roll_d20_plain():
 def test_roll_d20_advantage_uses_higher():
     dice.seed(1)
     adv = dice.roll_d20(advantage="advantage")
+    assert len(adv["rolls"]) == 2 and adv["d20"] == max(adv["rolls"])
     dice.seed(1)
-    plain = dice.roll_d20()
-    assert adv["d20"] >= plain["d20"]  # 同种子下优势取双骰较高，必然 >= 单骰
+    dis = dice.roll_d20(advantage="disadvantage")
+    assert len(dis["rolls"]) == 2 and dis["d20"] == min(dis["rolls"])
 
 
 def test_roll_d20_injection():
