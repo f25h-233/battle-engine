@@ -24,6 +24,7 @@ if hasattr(sys.stderr, "reconfigure"):
         pass
 
 from .core import dice, monster_parser, persistence as P, resolution as R, srd
+from .core import writeback as W
 from .core.models import ActionError, Actor, AttackSpec, Encounter
 
 def _campaign_dir(name: str) -> Path:
@@ -335,10 +336,29 @@ def cmd_next_turn(enc: Encounter) -> None:
     _save(enc)
 
 
-def cmd_end(enc: Encounter) -> None:
+def cmd_end(enc: Encounter, args) -> None:
     enc.end()
     print(f"  战斗结束。共 {enc.round} 回合，{len(enc.log)} 条动作日志。")
     _save(enc)
+    notes = W.writeback_combatants(enc, _campaign_dir(enc.campaign))
+    for n in notes:
+        print(f"  · {n}")
+    if getattr(args, "award_xp", False):
+        xp_total = sum(c.actor.xp for c in enc.combatants.values()
+                       if c.actor.kind == "npc" and c.hp <= 0)
+        pcs = [c for c in enc.combatants.values()
+               if c.actor.kind == "pc" and c.hp > 0]
+        print(f"  已消灭 NPC XP 合计: {xp_total}"
+              + (f"，平分给 {len(pcs)} 名存活 PC（每人 {xp_total // len(pcs)}）"
+                 if pcs else "，无存活 PC 可分"))
+        for c in pcs:
+            path = W.character_sheet_path(_campaign_dir(enc.campaign), c.actor.name)
+            if not path.exists():
+                print(f"  · 未找到人物卡 {path.name}——请 DM 手动加 "
+                      f"{xp_total // len(pcs)} XP")
+                continue
+            for n in W.update_xp(path, xp_total // len(pcs)):
+                print(f"  · {n}")
 
 
 def cmd_recover(args) -> None:
@@ -460,7 +480,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     c("undo", "回滚上一步")
     c("next-turn", "推进回合")
-    c("end", "结束战斗")
+    s = c("end", "结束战斗（自动回写人物卡 HP/临时HP/死亡豁免）")
+    s.add_argument("--award-xp", action="store_true", help="汇总已消灭 NPC 的 XP 平分给存活 PC 并回写经验值行")
     c("recover", "从 .bak 恢复战斗")
     return p
 
@@ -499,7 +520,7 @@ def main(argv=None) -> int:
          "npc-act": lambda: cmd_npc_act(enc, args.spec),
          "undo": lambda: cmd_undo(enc),
          "next-turn": lambda: cmd_next_turn(enc),
-         "end": lambda: cmd_end(enc),
+         "end": lambda: cmd_end(enc, args),
          "recover": lambda: cmd_recover(args),
          }[args.cmd]()
     except ActionError as e:

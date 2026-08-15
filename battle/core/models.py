@@ -41,6 +41,7 @@ class Actor:
     dex_mod: int
     attacks: list = field(default_factory=list)   # list[AttackSpec]
     conditions: list = field(default_factory=list)
+    xp: int = 0                            # SRD xp（XP 钩子用，NPC 有值）
 
     def attack(self, name: str) -> Optional[AttackSpec]:
         for atk in self.attacks:
@@ -295,6 +296,7 @@ class Encounter:
                         "note": a.note,
                     } for a in c.actor.attacks],
                     "conditions": c.actor.conditions,
+                    "xp": c.actor.xp,
                 },
             } for k, c in self.combatants.items()},
             "log": self.log,
@@ -317,7 +319,8 @@ class Encounter:
                           dex_mod=ad["dex_mod"],
                           attacks=[AttackSpec(**{**a, "range_ft": tuple(a["range_ft"])})
                                    for a in ad.get("attacks", [])],
-                          conditions=ad.get("conditions", []))
+                          conditions=ad.get("conditions", []),
+                          xp=ad.get("xp", 0))
             c = Combatant(id=cd["id"], actor=actor, x=cd["x"], y=cd["y"],
                           hp=cd["hp"], temp_hp=cd.get("temp_hp", 0),
                           conditions=cd.get("conditions", []),

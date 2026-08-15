@@ -106,4 +106,5 @@ def monster_to_actor(entry: dict, *, hp_avg: bool = True) -> Actor:
         speed_ft=speed,
         dex_mod=_dex_mod(entry.get("dex", 10)),
         attacks=attacks,
+        xp=entry.get("xp", 0),
     )
