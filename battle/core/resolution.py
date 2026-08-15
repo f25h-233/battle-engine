@@ -2,6 +2,7 @@
 resolve_* function that returns a structured ResolutionResult."""
 
 from __future__ import annotations
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -77,6 +78,15 @@ def collect_advantage(enc, attacker_id: str, target_id: str,
     return {"advantage": adv, "disadvantage": disadv, "reasons": reasons}
 
 
+_STATIC_RE = re.compile(r"([+-]\d+)\s*$")
+
+
+def _static_mod(notation: str) -> int:
+    """Dice notation's trailing static modifier: '1d6+3' → 3, '3d8' → 0."""
+    m = _STATIC_RE.search(notation.strip())
+    return int(m.group(1)) if m else 0
+
+
 def apply_damage(enc, cid: str, amount: int, damage_type: Optional[str] = None,
                  *, is_crit: bool = False) -> dict:
     """Apply damage: temp HP first; 0 HP → unconscious + death-save failure."""
@@ -103,6 +113,7 @@ def apply_damage(enc, cid: str, amount: int, damage_type: Optional[str] = None,
 def resolve_attack(enc, attacker_id: str, target_id: str,
                    attack: Optional[AttackSpec] = None,
                    *, injected_d20: Optional[int] = None,
+                   injected_damage: Optional[list] = None,
                    advantage: Optional[str] = None,
                    force: bool = False) -> ResolutionResult:
     """One attack: gates → range → advantage → roll → hit → damage → apply."""
@@ -143,14 +154,20 @@ def resolve_attack(enc, attacker_id: str, target_id: str,
     r.add(line)
 
     if hit and attack.damage:
-        dmg, rolls = dice.roll_dice(attack.damage)
-        crit_note = ""
-        if roll["crit"]:
-            dmg2, rolls2 = dice.roll_dice(attack.damage.split("+")[0].split("-")[0])
-            dmg += dmg2
-            rolls = rolls + rolls2
-            crit_note = " (暴击翻倍骰)"
-        r.add(f"伤害: {attack.damage} → {rolls} = {dmg}{crit_note} {attack.damage_type or ''}")
+        if injected_damage is not None:
+            dmg = sum(injected_damage) + _static_mod(attack.damage)
+            rolls = list(injected_damage)
+            note = "（手动掷骰——暴击翻倍请玩家自行掷双倍）" if roll["crit"] else ""
+            r.add(f"伤害: {attack.damage} → 注入 {rolls} = {dmg} {attack.damage_type or ''}{note}")
+        else:
+            dmg, rolls = dice.roll_dice(attack.damage)
+            crit_note = ""
+            if roll["crit"]:
+                dmg2, rolls2 = dice.roll_dice(attack.damage.split("+")[0].split("-")[0])
+                dmg += dmg2
+                rolls = rolls + rolls2
+                crit_note = " (暴击翻倍骰)"
+            r.add(f"伤害: {attack.damage} → {rolls} = {dmg}{crit_note} {attack.damage_type or ''}")
         apply_damage(enc, target_id, dmg, attack.damage_type, is_crit=roll["crit"])
         if not tgt.alive:
             r.add(f"{tgt.id} 生命值归零——陷入昏迷，死亡豁免 0/0")
@@ -168,6 +185,7 @@ def resolve_spell(enc, caster_id: str, spell_name: str, targets: list,
                   attack_bonus: Optional[int] = None,
                   attack: Optional[AttackSpec] = None,
                   injected_d20: Optional[int] = None,
+                  injected_damage: Optional[list] = None,
                   force: bool = False) -> ResolutionResult:
     """M1 spell resolution: per-target save (DC) or spell attack roll.
     Geometry/AoE arrives in M3; M1 resolves an explicit target list."""
@@ -179,7 +197,8 @@ def resolve_spell(enc, caster_id: str, spell_name: str, targets: list,
         # spell attack against a single target（委托 resolve_attack：其内部置 acted）
         tgt = targets[0]
         sub = resolve_attack(enc, caster_id, tgt, attack,
-                             injected_d20=injected_d20, force=force)
+                             injected_d20=injected_d20,
+                             injected_damage=injected_damage, force=force)
         sub.lines.insert(0, f"施法 {spell_name}")
         return sub
     if cast.acted:
@@ -192,9 +211,14 @@ def resolve_spell(enc, caster_id: str, spell_name: str, targets: list,
         passed = d20["total"] >= (dc or 10)
         r.add(f"{t.id} 豁免 {stat} vs DC {dc}: d20({d20['d20']}) + mod = {d20['total']} → {'成功' if passed else '失败'}")
         if not passed and damage:
-            dmg, rolls = dice.roll_dice(damage)
+            if injected_damage is not None:
+                dmg = sum(injected_damage) + _static_mod(damage)
+                rolls = list(injected_damage)
+                r.add(f"伤害 {damage} → 注入 {rolls} = {dmg} {damage_type or ''}")
+            else:
+                dmg, rolls = dice.roll_dice(damage)
+                r.add(f"伤害 {damage} → {rolls} = {dmg} {damage_type or ''}")
             apply_damage(enc, tid, dmg, damage_type)
-            r.add(f"伤害 {damage} → {rolls} = {dmg} {damage_type or ''}")
     r.hp_after = {tid: enc.combatants[tid].hp for tid in targets}
     cast.acted = True  # 施法消耗标准动作（豁免路径自己置位）
     enc.record(action="cast", caster=caster_id, spell=spell_name,
