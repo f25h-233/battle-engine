@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from . import dice
-from .models import ActionError, AttackSpec
+from .models import ActionError, AttackSpec, Combatant
 
 _UNCONSCIOUS = "unconscious"
 
@@ -56,6 +56,83 @@ def _occupant(enc, x: int, y: int, exclude_id: str = None):
         if other.hp > 0 and other.x == x and other.y == y:
             return other
     return None
+
+
+def _manhattan_path(enc, c: Combatant, dest) -> list:
+    """曼哈顿路径逐格序列（先横向后纵向，含终点不含起点）。"""
+    x, y = c.x, c.y
+    dx = 1 if dest[0] >= x else -1
+    dy = 1 if dest[1] >= y else -1
+    steps = []
+    while x != dest[0]:
+        x += dx
+        steps.append((x, y))
+    while y != dest[1]:
+        y += dy
+        steps.append((x, y))
+    return steps
+
+
+def _melee_reach(attacker: Combatant) -> int:
+    """近战触及：第一个近战攻击的 range_ft[0]（无近战攻击 → 无威胁范围）。"""
+    for a in attacker.actor.attacks:
+        if a.kind != "spell" and a.range_ft[0] and a.range_ft[0] <= 5:
+            return a.range_ft[0]
+    return 0
+
+
+def _aoo_candidates(enc, mover: Combatant) -> list:
+    """对移动者有威胁、有可用反应、有近战攻击的存活敌人。"""
+    foes = []
+    for other in enc.combatants.values():
+        if other.id == mover.id or not mover.is_enemy(other):
+            continue
+        if other.hp <= 0 or other.reaction_used:
+            continue
+        if _melee_reach(other) and enc.map.distance_ft(other, mover) <= _melee_reach(other):
+            foes.append(other)
+    return foes
+
+
+def resolve_aoo(enc, mover_id: str, attacker_id: str,
+                attack: Optional[AttackSpec] = None,
+                *, injected_d20: Optional[int] = None) -> ResolutionResult:
+    """机会攻击：敌人用反应在移动者离开其近战范围时发起一次近战攻击。"""
+    mover = enc.combatants[mover_id]
+    attacker = enc.combatants[attacker_id]
+    if attacker.reaction_used:
+        raise ActionError(f"{attacker.id} 反应已用，无法借机攻击")
+    if attack is None:
+        attack = next((a for a in attacker.actor.attacks
+                       if a.kind != "spell" and a.range_ft[0] and a.range_ft[0] <= 5), None)
+    if attack is None:
+        raise ActionError(f"{attacker.id} 没有近战攻击，无法借机攻击")
+    r = ResolutionResult(hp_before={mover_id: mover.hp})
+    adv = collect_advantage(enc, attacker_id, mover_id, attack, None)
+    roll = dice.roll_d20(attack.attack_bonus or 0, advantage=(
+        "advantage" if adv["advantage"] and not adv["disadvantage"]
+        else "disadvantage" if adv["disadvantage"] and not adv["advantage"]
+        else None), injected=injected_d20)
+    hit = roll["crit"] or (not roll["fumble"] and roll["total"] >= mover.actor.ac)
+    line = (f"借机攻击: {attacker.id} 袭击 {mover.id}: d20({roll['d20']})"
+            f"{' + ' + str(roll['mod']) if roll['mod'] else ''} = {roll['total']}"
+            f" vs AC {mover.actor.ac} → {'命中' if hit else '未命中'}")
+    if roll["crit"]:
+        line += " *** 暴击 ***"
+    r.add(line)
+    if hit and attack.damage:
+        dmg, rolls = dice.roll_dice(attack.damage)
+        if roll["crit"]:
+            dmg2, rolls2 = dice.roll_dice("+".join(re.findall(r"\d*d\d+", attack.damage)))
+            dmg += dmg2
+            rolls = rolls + rolls2
+        r.add(f"伤害: {attack.damage} → {rolls} = {dmg} {attack.damage_type or ''}")
+        apply_damage(enc, mover_id, dmg, attack.damage_type, is_crit=roll["crit"])
+        if not mover.alive:
+            r.add(f"{mover.id} 生命值归零——陷入昏迷，死亡豁免 0/0")
+    attacker.reaction_used = True
+    r.hp_after = {mover_id: mover.hp}
+    return r
 
 
 def collect_advantage(enc, attacker_id: str, target_id: str,
@@ -257,11 +334,32 @@ def resolve_move(enc, combatant_id: str, dest, *, force: bool = False) -> Resolu
         raise ActionError(f"移动 {dx}ft 超出剩余移动力 {c.movement_left_ft}ft")
     if c.acted:
         raise ActionError(f"{c.id} 本回合已用动作")
-    enc.push_undo()  # 首个状态变更之前
-    r = ResolutionResult()
-    r.add(f"{c.id} 移动 {dx}ft → ({dest[0]},{dest[1]})")
+    enc.push_undo()  # 首个状态变更之前（移动 + 途中所有 AoO 作为一个 undo 单元）
+    r = ResolutionResult(hp_before={combatant_id: c.hp})
+    if not c.disengaged:
+        foes = _aoo_candidates(enc, c)
+    else:
+        foes = []
+    walked = 0
+    for step in _manhattan_path(enc, c, dest):
+        r.add(f"{c.id} 移动 → ({step[0]},{step[1]})")
+        c.x, c.y = step
+        walked += 1
+        if not c.disengaged:
+            for foe in foes:
+                if enc.map.distance_ft(foe, c) > _melee_reach(foe):
+                    sub = resolve_aoo(enc, c.id, foe.id, injected_d20=None)
+                    r.lines.extend(sub.lines)
+                    if sub.hp_after:
+                        r.hp_after.update(sub.hp_after)
+                    foes.remove(foe)      # 一次移动每敌人最多一次
+                    if not c.alive:
+                        break             # 被击倒 → 移动终止（5e：昏迷不能移动）
+        if not c.alive:
+            break
+    dx = walked * enc.map.grid_size_ft  # 实走距离（被击倒提前终止时少于计划距离）
+    r.add(f"{c.id} 本次移动 {dx}ft（剩余 {c.movement_left_ft}ft）")
     c.movement_left_ft -= dx
-    c.x, c.y = dest
     enc.record(action="move", combatant=combatant_id, dest=list(dest), lines=r.lines)
     return r
 
@@ -283,9 +381,26 @@ def resolve_dash(enc, combatant_id: str, dest) -> ResolutionResult:
     if dx > speed:
         raise ActionError(f"冲刺移动 {dx}ft 超出速度 {speed}ft")
     enc.push_undo()  # 首个状态变更之前
-    r = ResolutionResult()
-    r.add(f"{c.id} 冲刺 {dx}ft → ({dest[0]},{dest[1]})（动作已用）")
-    c.x, c.y = dest
+    r = ResolutionResult(hp_before={combatant_id: c.hp})
+    if not c.disengaged:
+        foes = _aoo_candidates(enc, c)
+    else:
+        foes = []
+    for step in _manhattan_path(enc, c, dest):
+        c.x, c.y = step
+        if not c.disengaged:
+            for foe in foes:
+                if enc.map.distance_ft(foe, c) > _melee_reach(foe):
+                    sub = resolve_aoo(enc, c.id, foe.id, injected_d20=None)
+                    r.lines.extend(sub.lines)
+                    if sub.hp_after:
+                        r.hp_after.update(sub.hp_after)
+                    foes.remove(foe)
+                    if not c.alive:
+                        break
+        if not c.alive:
+            break
+    r.add(f"{c.id} 冲刺 → ({dest[0]},{dest[1]})（动作已用）")
     c.acted = True
     c.movement_left_ft = 0
     enc.record(action="dash", combatant=combatant_id, dest=list(dest), lines=r.lines)

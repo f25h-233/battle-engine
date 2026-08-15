@@ -90,3 +90,103 @@ def test_serialization_roundtrip():
     enc2 = Encounter.from_dict(json.loads(json.dumps(enc.to_dict())))
     assert enc2.combatants[cpc.id].dodging is True
     assert enc2.combatants[cpc.id].disengaged is True
+
+
+# ── 借机攻击（AoO）──────────────────────────────────────────────
+
+def make_adjacent_factory():
+    """pc 与 gob 相邻（5ft），gob 持匕首近战。"""
+    enc = Encounter(campaign="aoo", width=20, height=20)
+    pc = Actor(name="星沢羽", kind="pc", ac=16, max_hp=17, speed_ft=30, dex_mod=2)
+    gob = Actor(name="哥布林", kind="npc", ac=15, max_hp=7, speed_ft=30, dex_mod=1,
+                attacks=[DAGGER])
+    cpc = enc.add_combatant(pc, x=3, y=3)
+    cg = enc.add_combatant(gob, x=4, y=3)
+    enc.roll_initiative()
+    enc.start_combat()
+    return enc, cpc, cg
+
+
+def test_manhattan_path_steps():
+    enc, cpc, cg = make_adjacent_factory()
+    steps = R._manhattan_path(enc, cpc, (3, 6))
+    assert steps == [(3, 4), (3, 5), (3, 6)]     # 每步 1 格，含终点
+
+
+def test_move_out_of_reach_triggers_aoo():
+    enc, cpc, cg = make_adjacent_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    hp0 = cpc.hp
+    r = R.resolve_move(enc, cpc.id, (3, 6))       # 从 gob 邻格离开 15ft
+    lines = "\n".join(r.lines)
+    assert "借机攻击" in lines
+    assert cg.reaction_used is True               # 哥布林反应被消耗
+    assert cpc.hp <= hp0                          # 机会攻击可能造成伤害
+    assert (cpc.x, cpc.y) == (3, 6)               # 移动未被打断（5e）
+
+
+def test_aoo_damage_deterministic_direct_call():
+    enc, cpc, cg = make_adjacent_factory()
+    hp0 = cpc.hp
+    r = R.resolve_aoo(enc, cpc.id, cg.id, DAGGER, injected_d20=15)
+    assert r.ok and cg.reaction_used is True
+    # d20(15)+5=20 ≥ AC16 命中；伤害 1d4+3 随机但 ≤ 7
+    assert cpc.hp <= hp0 and "借机攻击" in "\n".join(r.lines)
+
+
+def test_aoo_miss_no_damage():
+    enc, cpc, cg = make_adjacent_factory()
+    hp0 = cpc.hp
+    r = R.resolve_aoo(enc, cpc.id, cg.id, DAGGER, injected_d20=1)
+    assert "未命中" in "\n".join(r.lines)   # d20(1)+5=6 < AC16 → miss
+    assert cpc.hp == hp0                    # miss 不掉血
+
+
+def test_move_within_reach_no_aoo():
+    enc, cpc, cg = make_adjacent_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    r = R.resolve_move(enc, cpc.id, (5, 3))       # 横向移动仍相邻——不离开范围
+    assert "借机攻击" not in "\n".join(r.lines)
+    assert cg.reaction_used is False
+
+
+def test_disengage_prevents_aoo():
+    enc, cpc, cg = make_adjacent_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    R.resolve_disengage(enc, cpc.id)
+    cpc.acted = False   # 引擎简化：脱离消耗动作；本测试只验证"脱离状态下移动不触发 AoO"
+    r = R.resolve_move(enc, cpc.id, (3, 6))
+    assert "借机攻击" not in "\n".join(r.lines)
+    assert cg.reaction_used is False
+
+
+def test_dash_triggers_aoo():
+    enc, cpc, cg = make_adjacent_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    r = R.resolve_dash(enc, cpc.id, (3, 8))       # 冲刺离开
+    assert "借机攻击" in "\n".join(r.lines)
+    assert cg.reaction_used is True
+
+
+def test_move_multiple_steps_single_aoo():
+    """Step 1 补记：替换原 test_aoo_only_once_per_enemy_per_move——
+    直线曼哈顿路径无法"进出再进出"，原版退化为方向性断言（且 (5,5)→(4,5)
+    实际会离开 gob 范围触发 AoO，断言必挂）。此测试用 5 步长移验证
+    "一次移动中每个敌人最多触发一次 AoO"（foes.remove 语义）。"""
+    enc = Encounter(campaign="aoo2", width=20, height=20)
+    pc = Actor(name="星沢羽", kind="pc", ac=16, max_hp=30, speed_ft=30, dex_mod=2)
+    gob = Actor(name="哥布林", kind="npc", ac=15, max_hp=7, speed_ft=30, dex_mod=1,
+                attacks=[DAGGER])
+    cpc = enc.add_combatant(pc, x=3, y=3)
+    cg = enc.add_combatant(gob, x=4, y=3)
+    enc.roll_initiative()
+    enc.start_combat()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    r = R.resolve_move(enc, cpc.id, (3, 8))       # 走 5 步垂直离开 gob 范围
+    assert "\n".join(r.lines).count("借机攻击") == 1
+    assert cg.reaction_used is True
