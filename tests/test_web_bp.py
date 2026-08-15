@@ -225,3 +225,73 @@ def test_action_end_turn_advances(tmp_path, monkeypatch):
     assert r.status_code == 200 and j["ok"]
     assert j["state"]["turn_index"] == 1
     assert j["state"]["turn_order"][1] in ("哥布林",)  # 星沢羽 后必是 哥布林
+
+
+# ── POST /battle/roll ────────────────────────────────────────────
+
+def test_roll_d20(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = client.post("/battle/roll", json={"spec": "1d20", "mod": 5})
+    j = r.get_json()
+    assert r.status_code == 200 and j["ok"]
+    assert len(j["rolls"]) == 1 and 1 <= j["rolls"][0] <= 20
+    assert j["total"] == j["rolls"][0] + 5
+
+
+def test_roll_advantage_uses_two(tmp_path, monkeypatch):
+    client = make_client(tmp_path, monkeypatch)
+    r = client.post("/battle/roll", json={"spec": "1d20", "advantage": "advantage"})
+    j = r.get_json()
+    assert len(j["rolls"]) == 2
+
+
+def test_roll_dice_notation(tmp_path, monkeypatch):
+    client = make_client(tmp_path, monkeypatch)
+    r = client.post("/battle/roll", json={"spec": "2d6+3"})
+    j = r.get_json()
+    assert j["ok"] and len(j["rolls"]) == 2
+    assert j["total"] == sum(j["rolls"]) + 3
+
+
+def test_roll_bad_spec(tmp_path, monkeypatch):
+    client = make_client(tmp_path, monkeypatch)
+    r = client.post("/battle/roll", json={"spec": "xyz"})
+    assert r.status_code == 400 and not r.get_json()["ok"]
+
+
+# ── GET /battle/stream (SSE) ─────────────────────────────────────
+
+def test_stream_events_initial_then_changes(tmp_path, monkeypatch):
+    """_stream_events：首帧立即给当前状态；文件变化推新状态；未变发心跳。"""
+    make_encounter(tmp_path)
+    camp_dir = tmp_path / "campaigns" / "t"
+    events = bp._stream_events(camp_dir, interval=0.001)
+    first = next(events)
+    assert isinstance(first, dict) and first.get("state", {}).get("campaign") == "t"
+    keep = next(events)
+    assert keep == ": keepalive"
+    enc = P.load_encounter(camp_dir)
+    enc.combatants["哥布林"].hp = 3
+    P.save_encounter(enc, camp_dir)
+    changed = next(events)
+    assert isinstance(changed, dict)
+    assert changed["state"]["combatants"]["哥布林"]["hp"] == 3
+
+
+def test_stream_events_file_missing(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    camp_dir = tmp_path / "campaigns" / "t"
+    events = bp._stream_events(camp_dir, interval=0.001)
+    next(events)                                     # 初始状态
+    (camp_dir / "battle.json").unlink()
+    err = next(events)
+    assert isinstance(err, dict) and "无 battle.json" in err.get("error", "")
+
+
+def test_stream_route_headers(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    with client.get("/battle/stream") as resp:
+        assert resp.status_code == 200
+        assert resp.mimetype == "text/event-stream"

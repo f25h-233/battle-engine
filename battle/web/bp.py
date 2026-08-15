@@ -151,6 +151,77 @@ def action():
                         "state": None}), 404
 
 
+@battle_bp.route("/roll", methods=["POST"])
+def roll():
+    """服务器掷骰（spec §7.2）。手动掷不经过此端点——注入走 /battle/action。"""
+    if not _token_ok():
+        return jsonify({"ok": False, "error": "令牌无效"}), 401
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False, "error": "JSON 请求体无效"}), 400
+    spec = str(body.get("spec", "1d20")).strip()
+    try:
+        if spec == "1d20":
+            r = dice.roll_d20(mod=int(body.get("mod", 0) or 0),
+                              advantage=body.get("advantage"))
+            return jsonify({"ok": True, "rolls": r["rolls"], "total": r["total"],
+                            "crit": r["crit"], "fumble": r["fumble"]})
+        total, rolls = dice.roll_dice(spec)
+        return jsonify({"ok": True, "rolls": rolls, "total": total,
+                        "crit": False, "fumble": False})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+def _stream_events(camp_dir, interval: float = _POLL_SECONDS):
+    """SSE 事件源：首帧立即推当前状态，此后 battle.json mtime 变化才推新状态，
+    否则发 ': keepalive' 心跳字符串。文件缺失/损坏推 {"error": ...}（spec §10：
+    报错，绝不静默清空）。"""
+    battle_file = P.battle_path(camp_dir)
+    last_mtime = object()                 # 哨兵：保证首帧必发
+    while True:
+        try:
+            mtime = battle_file.stat().st_mtime_ns
+        except OSError:
+            mtime = None
+        if mtime != last_mtime:
+            last_mtime = mtime
+            try:
+                enc = P.load_encounter(camp_dir)
+                if enc is None:
+                    yield {"state": None, "error": "无 battle.json（战斗文件不存在）"}
+                else:
+                    yield {"state": _state_payload(enc)}
+            except Exception as e:
+                yield {"error": f"battle.json 损坏: {e}（可用 CLI: battle recover 从 .bak 恢复）"}
+        else:
+            yield ": keepalive"
+        time.sleep(interval)
+
+
+@battle_bp.route("/stream")
+def stream():
+    try:
+        camp_dir = _campaign_dir()
+    except ActionError as e:
+        return jsonify({"ok": False, "error": str(e)}), 404
+
+    def generate():
+        for ev in _stream_events(camp_dir):
+            if isinstance(ev, str):
+                yield ev + "\n\n"
+            else:
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Transfer-Encoding": "chunked",
+        "Connection": "keep-alive",
+    })
+
+
 def _dispatch_action(enc: Encounter, body: dict) -> R.ResolutionResult:
     """动作分派：end_turn 无需 actor；其余需 actor + 战斗员在场。
 
