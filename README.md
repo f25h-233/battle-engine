@@ -61,3 +61,18 @@ python3 -m pytest -q
 | `GET /battle/stream` | SSE：状态变化推送（轮询 battle.json mtime） |
 
 战役解析：`BATTLE_CAMPAIGN` 环境变量优先，否则显示端 `.campaign` 运行时文件。LAN 模式 POST 需 `X-DND-Token`（显示端自动注入页面）。
+
+## M3：AoE 施法 + 规则补全 + 回写（2026-08-15）
+
+- **AoE 施法**：`battle cast 法师 "火球术" --point 5,5 --radius 20 --dc 14 --stat dex --dmg 8d6 --type 火焰`——覆盖格内目标逐个豁免，成功豁免半伤（`--no-half` 关闭）。半径缺省从 SRD 描述解析（`20-foot-radius`），解析不到=仅中心格。
+- **面板 AoE**：选 AoE 法术 → 点地图格子（红色高亮覆盖格）→ 点「施放」结算。豁免型法术点敌方 token 直接结算。
+- **借机攻击**：移动/冲刺离开敌人近战范围触发（曼哈顿路径逐格判定）；`battle disengage` 免触发；敌人每回合一次反应；被击倒时移动终止。简化：单路径、首近战攻击、不打断移动。
+- **闪避/脱离**：dodge 后攻击掷骰劣势 + 敏捷豁免优势（直到自己下回合开始）；disengage 本回合移动免借机攻击。
+- **回写**：`battle end` 自动回写人物卡（HP/临时HP/死亡豁免，中英文卡兼容）；`--award-xp` 把已消灭 NPC 的 SRD XP 平分给存活 PC 并更新卡上经验值行。
+- **面板 undo**：动作面板「撤销」按钮（CLI `battle undo` 已有）。
+- **修复批**：注入 d20 服务端校验 1–20（CLI/web 均拒绝越界）、死亡豁免回合门（只能自己回合掷）、`battle init` 显示 d20 面值、`--hp-roll` 掷 HP、`cast` 无目标拒绝、`recover` 必须 -c、暴击多骰式翻倍、log 上限 200 条。
+
+### M3 REST 扩展
+| 端点 | 说明 |
+|---|---|
+| `POST /battle/action` | 新增 `{"action":"undo"}`；cast 支持 `center:[x,y]` + `radius` |
