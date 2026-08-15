@@ -304,7 +304,7 @@ function tokenClick(id) {
   if (!tgt) return;
   selected = id;
   const who = me();
-  if (who && myTurn() && id !== identity && tgt.hp > 0 && selAttack) {
+  if (who && myTurn() && !who.acted && id !== identity && tgt.hp > 0 && selAttack) {
     const atk = (who.attacks || []).find((a) => a.name === selAttack);
     if (atk) {
       const rng = atk.range_ft[1] || atk.range_ft[0];
@@ -348,6 +348,9 @@ function postAction(action, extra) {
       S = r.state;
       render();
       flashRoll(r.lines);
+      // 手动掷值已消费，清空避免陈旧注入泄漏到下一次动作
+      $("inject-d20").value = "";
+      $("inject-damage").value = "";
     } else {
       setMsg(r.error || "动作被拒绝", "err");
       if (r.state) { S = r.state; render(); }
@@ -362,18 +365,23 @@ function parseDmg(text) {
   return parts.length ? parts : null;
 }
 
+let chipTimer = null;
 function flashRoll(lines) {
   // “掷骰 → 结果即上屏”：从结算行提取 d20 值，右上角短暂闪现骰子结果
   const m = (lines || []).map((l) => l.match(/d20\((\d+)\)/)).filter(Boolean)[0];
   if (!m) return;
-  const chip = document.createElement("div");
-  chip.id = "dice-chip";
+  const chip = document.getElementById("dice-chip") || (() => {
+    const el = document.createElement("div");
+    el.id = "dice-chip";
+    document.body.appendChild(el);
+    return el;
+  })();
   chip.textContent = `🎲 d20 = ${m[1]}`;
-  document.body.appendChild(chip);
+  clearTimeout(chipTimer);   // 复用 chip：旧计时器链不再影响新闪现
   requestAnimationFrame(() => { chip.style.opacity = "1"; });
-  setTimeout(() => {
+  chipTimer = setTimeout(() => {
     chip.style.opacity = "0";
-    setTimeout(() => chip.remove(), 350);
+    setTimeout(() => { if (chip.style.opacity === "0") chip.remove(); }, 350);
   }, 1200);
 }
 

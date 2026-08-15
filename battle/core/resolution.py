@@ -48,6 +48,16 @@ def _enemy_within(enc, cid: str, dist_ft: int) -> list:
     return foes
 
 
+def _occupant(enc, x: int, y: int, exclude_id: str = None):
+    """该格上的存活战斗员（排除自己）；无则 None。与前端 cellClick 判定一致。"""
+    for other in enc.combatants.values():
+        if other.id == exclude_id:
+            continue
+        if other.hp > 0 and other.x == x and other.y == y:
+            return other
+    return None
+
+
 def collect_advantage(enc, attacker_id: str, target_id: str,
                       attack: Optional[AttackSpec], explicit: Optional[str]) -> dict:
     """Advantage sources (M1): explicit flag, prone, unconscious,
@@ -234,6 +244,9 @@ def resolve_move(enc, combatant_id: str, dest, *, force: bool = False) -> Resolu
         dest = enc.waypoint(dest)
     if not enc.map.in_bounds(*dest):
         raise ActionError(f"目标 ({dest[0]},{dest[1]}) 超出地图")
+    occ = _occupant(enc, dest[0], dest[1], exclude_id=combatant_id)
+    if occ:
+        raise ActionError(f"目标格 ({dest[0]},{dest[1]}) 被 {occ.actor.name} 占据")
     dx = (abs(dest[0] - c.x) + abs(dest[1] - c.y)) * enc.map.grid_size_ft
     if not force and dx > c.movement_left_ft:
         raise ActionError(f"移动 {dx}ft 超出剩余移动力 {c.movement_left_ft}ft")
@@ -258,6 +271,9 @@ def resolve_dash(enc, combatant_id: str, dest) -> ResolutionResult:
         dest = enc.waypoint(dest)
     if not enc.map.in_bounds(*dest):
         raise ActionError(f"目标 ({dest[0]},{dest[1]}) 超出地图")
+    occ = _occupant(enc, dest[0], dest[1], exclude_id=combatant_id)
+    if occ:
+        raise ActionError(f"目标格 ({dest[0]},{dest[1]}) 被 {occ.actor.name} 占据")
     dx = (abs(dest[0] - c.x) + abs(dest[1] - c.y)) * enc.map.grid_size_ft
     if dx > speed:
         raise ActionError(f"冲刺移动 {dx}ft 超出速度 {speed}ft")

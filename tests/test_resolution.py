@@ -166,6 +166,24 @@ def test_move_beyond_speed_rejected():
         R.resolve_move(enc, cpc.id, (9, 0))
 
 
+def test_move_into_occupied_rejected():
+    enc, cpc, cg1, cg2 = enc_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    # (1,0) 被 cg2 占据，5ft 在移动预算内 → 是占据而非超速拒绝
+    with pytest.raises(ActionError, match="占据"):
+        R.resolve_move(enc, cpc.id, (1, 0))
+
+
+def test_dash_into_occupied_rejected():
+    enc, cpc, cg1, cg2 = enc_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    # (1,0) 被 cg2 占据，5ft 在冲刺速度内 → 是占据而非超速拒绝
+    with pytest.raises(ActionError, match="占据"):
+        R.resolve_dash(enc, cpc.id, (1, 0))
+
+
 def test_ranged_attack_adjacent_enemy_disadvantage():
     enc, cpc, cg1, cg2 = enc_factory()
     enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
