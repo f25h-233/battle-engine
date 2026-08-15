@@ -16,6 +16,7 @@ let dashMode = false;
 let manualDice = false;
 let busy = false;
 let gridDims = null;   // 已建网格尺寸 [w, h]
+let pendingCenter = null;  // AoE 预览中心（点格子选中，点「施放」结算）
 
 /* ── 基础工具 ─────────────────────────────────────────────────── */
 function api(path, body) {
@@ -155,6 +156,26 @@ function renderGrid() {
     g.appendChild(t);
   });
   paintOverlays();
+  paintAoe();
+}
+
+function paintAoe() {
+  const g = $("grid");
+  g.querySelectorAll(".aoe-cell").forEach((e) => e.classList.remove("aoe-cell"));
+  const who = me();
+  if (!who || !pendingCenter) return;
+  const atk = (who.attacks || []).find((a) => a.name === selAttack);
+  if (!atk || !atk.aoe_radius_ft) return;
+  const r = atk.aoe_radius_ft;
+  const [cx, cy] = pendingCenter;
+  for (let y = 0; y < S.map.height; y++)
+    for (let x = 0; x < S.map.width; x++) {
+      const d = Math.round(Math.hypot((x - cx) * 5, (y - cy) * 5));
+      if (d <= r) {
+        const cell = g.querySelector(`.grid-cell[data-x="${x}"][data-y="${y}"]`);
+        if (cell) cell.classList.add("aoe-cell");
+      }
+    }
 }
 
 function paintOverlays() {
@@ -216,9 +237,11 @@ function renderActions() {
       const btn = document.createElement("button");
       btn.dataset.action = a.kind === "spell" ? "cast" : "attack";
       btn.dataset.name = a.name;
+      btn.dataset.aoe = a.aoe_radius_ft ? String(a.aoe_radius_ft) : "";
       const rng = a.range_ft[1] || a.range_ft[0];
       btn.textContent = `${a.kind === "spell" ? "施法" : "攻击"} ${a.name}` +
         (a.damage ? ` ${a.damage}` : "");
+      if (a.aoe_radius_ft) btn.textContent += `（${a.aoe_radius_ft}ft 半径）`;
       btn.title = `射程 ${rng}ft · ${a.damage_type || "—"}` + (a.note ? ` · ${a.note}` : "");
       btn.className = selAttack === a.name ? "primary" : "";
       btn.disabled = !myTurn() || who.acted;
@@ -233,8 +256,14 @@ function renderActions() {
   ].map((b) => `<button data-action="${b.action}" ${canAct ? "" : "disabled"}>${b.label}</button>`).join("");
   const downed = who && who.hp === 0 && who.death_saves.failures < 3 && !who.death_saves.stable;
   mb.innerHTML += `<button data-action="death_save" class="danger" ` +
-    `${downed ? "" : "disabled"}>死亡豁免（成${who ? who.death_saves.successes : 0}` +
+    `${downed && myTurn() ? "" : "disabled"}>死亡豁免（成${who ? who.death_saves.successes : 0}` +
     `/败${who ? who.death_saves.failures : 0}）</button>`;
+  mb.innerHTML += `<button data-action="undo">撤销</button>`;
+  if (who && selAttack && pendingCenter && S) {
+    const atk = (who.attacks || []).find((a) => a.name === selAttack);
+    mb.innerHTML += `<button data-action="cast_aoe" class="primary">施放 ${selAttack} @(${pendingCenter[0]},${pendingCenter[1]})</button>`;
+    mb.innerHTML += `<button data-action="cancel_aoe">取消 AoE</button>`;
+  }
   mb.innerHTML += `<button data-action="end_turn" class="primary" ` +
     `${myTurn() ? "" : "disabled"}>结束回合</button>`;
   $("dash-toggle").disabled = !myTurn();
@@ -260,6 +289,13 @@ function registerHandlers() {
     const act = btn.dataset.action;
     if (act === "attack" || act === "cast") {
       selAttack = name;
+      const aoe = btn.dataset.aoe;
+      if (aoe) {
+        pendingCenter = null;                 // AoE 预览态：点格子选中心后「施放」结算
+        setMsg(`已选 ${name}（${aoe}ft 半径）——点击地图格子选中心`, "ok");
+        renderGrid();
+        return;
+      }
       const tgt = selected && S.combatants[selected];
       if (tgt && tgt.id !== identity && tgt.hp > 0) {
         postAction(act, { target: tgt.id, attack: name });
@@ -267,6 +303,14 @@ function registerHandlers() {
         setMsg(`已选 ${name} —— 点击敌方 token 结算`, "ok");
         renderGrid();
       }
+    } else if (act === "undo") {
+      postAction("undo", {});
+    } else if (act === "cast_aoe") {
+      postAction("cast", { attack: name, center: pendingCenter });
+    } else if (act === "cancel_aoe") {
+      pendingCenter = null;
+      renderGrid();
+      setMsg("已取消 AoE 预览", "");
     } else if (act === "end_turn") {
       postAction("end_turn", {});
     } else {
@@ -323,6 +367,13 @@ function tokenClick(id) {
 function cellClick(x, y) {
   const who = me();
   if (!who || !myTurn() || busy) return;
+  const atk = selAttack ? (who.attacks || []).find((a) => a.name === selAttack) : null;
+  if (atk && atk.aoe_radius_ft) {
+    pendingCenter = [x, y];        // AoE 预览：点格子选中心（可覆盖敌方 token 格）
+    renderGrid();
+    setMsg(`AoE 中心 (${x},${y})——点「施放」结算`, "ok");
+    return;
+  }
   const occ = Object.values(S.combatants).find((c) => c.x === x && c.y === y && c.hp > 0);
   if (occ) { setMsg(`该格被 ${occ.name} 占据`, "err"); return; }
   if (dashMode) postAction("dash", { to: [x, y] });
@@ -346,6 +397,7 @@ function postAction(action, extra) {
     busy = false;
     if (r.ok) {
       S = r.state;
+      pendingCenter = null;
       render();
       flashRoll(r.lines);
       // 手动掷值已消费，清空避免陈旧注入泄漏到下一次动作

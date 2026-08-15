@@ -97,3 +97,4 @@ button.danger { border-color: var(--err); color: var(--err); }
   color: var(--yellow); border: 1px solid var(--accent); border-radius: 8px;
   padding: 8px 14px; font-size: 15px; font-weight: 600; opacity: 0;
   transition: opacity .3s; pointer-events: none; z-index: 50; }
+.grid-cell.aoe-cell { background: rgba(224, 85, 85, .35); border-color: var(--err); }

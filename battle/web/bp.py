@@ -94,15 +94,18 @@ def _state_payload(enc: Encounter) -> dict:
             "x": c.x, "y": c.y, "hp": c.hp, "max_hp": c.max_hp,
             "temp_hp": c.temp_hp, "ac": a.ac, "speed_ft": a.speed_ft,
             "conditions": c.conditions, "concentration": c.concentration,
-            "initiative": c.initiative, "acted": c.acted,
+            "initiative": c.initiative, "initiative_d20": c.initiative_d20,
+            "acted": c.acted,
             "bonus_acted": c.bonus_acted, "reaction_used": c.reaction_used,
             "movement_left_ft": c.movement_left_ft,
+            "dodging": c.dodging, "disengaged": c.disengaged,
             "death_saves": c.death_saves,
             "attacks": [{
                 "name": a.name, "kind": a.kind, "attack_bonus": a.attack_bonus,
                 "range_ft": list(a.range_ft), "damage": a.damage,
                 "damage_type": a.damage_type, "save_dc": a.save_dc,
                 "save_stat": a.save_stat, "note": a.note,
+                "aoe_radius_ft": a.aoe_radius_ft,
             } for a in a.attacks],
         }
     data["combatants"] = flat
@@ -154,6 +157,8 @@ def action():
         except ActionError:
             pass
         return jsonify({"ok": False, "error": str(e), "state": payload}), 400
+    except ValueError as e:            # 注入 d20 越界等（dice 层校验）
+        return jsonify({"ok": False, "error": str(e), "state": None}), 400
     except KeyError as e:
         return jsonify({"ok": False, "error": f"战斗员不存在: {e}",
                         "state": None}), 404
@@ -245,6 +250,13 @@ def _dispatch_action(enc: Encounter, body: dict) -> R.ResolutionResult:
         inj_dmg = [int(v) for v in injected["damage"]
                    if isinstance(v, (int, float))]
 
+    if action == "undo":
+        if enc.pop_undo():
+            r = R.ResolutionResult()
+            r.add("已回滚上一步")
+            return r
+        raise ActionError("没有可回滚的操作")
+
     if action == "end_turn":
         enc.next_turn()
         r = R.ResolutionResult()
@@ -269,14 +281,30 @@ def _dispatch_action(enc: Encounter, body: dict) -> R.ResolutionResult:
                                 force=bool(body.get("force")))
 
     if action == "cast":
+        atk = _resolve_attack_spec(enc, cid, body.get("attack"))
+        spell = body.get("spell") or (atk.name if atk else "施法")
+        center = None
+        if body.get("center") is not None:
+            center = _coords(body.get("center"))
+        if center is not None:
+            radius = body.get("radius")
+            return R.resolve_spell(enc, cid, spell, [], attack=atk,
+                                   center=center,
+                                   radius_ft=int(radius) if radius is not None else None,
+                                   injected_d20=inj_d20, injected_damage=inj_dmg,
+                                   force=bool(body.get("force")))
         tgt = str(body.get("target", "")).strip().lower().replace(" ", "")
         if not tgt:
             raise ActionError("施法需要目标")
-        atk = _resolve_attack_spec(enc, cid, body.get("attack"))
-        spell = body.get("spell") or (atk.name if atk else "施法")
-        return R.resolve_spell(enc, cid, spell, [tgt],
-                               attack=atk, injected_d20=inj_d20,
-                               injected_damage=inj_dmg,
+        if atk is not None and atk.save_dc is not None:
+            # 豁免型法术（单目标）：走豁免路径，不再委托攻击掷骰
+            return R.resolve_spell(enc, cid, spell, [tgt], dc=atk.save_dc,
+                                   stat=atk.save_stat or "dex", damage=atk.damage,
+                                   damage_type=atk.damage_type,
+                                   injected_d20=inj_d20, injected_damage=inj_dmg,
+                                   force=bool(body.get("force")))
+        return R.resolve_spell(enc, cid, spell, [tgt], attack=atk,
+                               injected_d20=inj_d20, injected_damage=inj_dmg,
                                force=bool(body.get("force")))
 
     if action == "move":

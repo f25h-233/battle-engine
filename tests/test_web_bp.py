@@ -305,3 +305,75 @@ def test_stream_route_headers(tmp_path, monkeypatch):
     with client.get("/battle/stream") as resp:
         assert resp.status_code == 200
         assert resp.mimetype == "text/event-stream"
+
+
+# ── M3 web ────────────────────────────────────────────────────────
+
+def test_action_undo_rolls_back(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="attack", actor="星沢羽", target="哥布林",
+                    attack="短弓", injected={"d20": 15})
+    assert r.get_json()["state"]["combatants"]["哥布林"]["hp"] < 7
+    r2 = post_action(client, action="undo")
+    j2 = r2.get_json()
+    assert r2.status_code == 200 and j2["ok"]
+    assert j2["state"]["combatants"]["哥布林"]["hp"] == 7
+    # undo 无 actor 也可用（不要求身份）；快照回滚 → acted 一并还原
+    assert j2["state"]["combatants"]["星沢羽"]["acted"] is False   # 动作已回滚
+    assert j2["state"]["turn_order"][j2["state"]["turn_index"]] == "星沢羽"  # undo 后回合未动
+
+
+def test_action_cast_save_based_spell(tmp_path, monkeypatch):
+    """豁免型法术（AttackSpec.save_dc）→ 豁免路径而非攻击掷骰。"""
+    from battle.core.models import AttackSpec as AS
+    enc = make_encounter(tmp_path)
+    c = enc.combatants["星沢羽"]
+    c.actor.attacks = [AS(name="剧毒喷射", kind="spell", save_dc=13, save_stat="con",
+                          range_ft=(30, 0), damage="1d12", damage_type="毒素")]
+    P.save_encounter(enc, tmp_path / "campaigns" / "t")
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="cast", actor="星沢羽", target="哥布林",
+                    attack="剧毒喷射", injected={"d20": 5})
+    j = r.get_json()
+    assert r.status_code == 200 and j["ok"]
+    assert "豁免" in "\n".join(j["lines"])
+    assert "命中" not in "\n".join(j["lines"])   # 豁免路径不走攻击掷骰（无"命中"行）
+
+
+def test_action_cast_aoe_center(tmp_path, monkeypatch):
+    from battle.core.models import AttackSpec as AS
+    enc = make_encounter(tmp_path)
+    c = enc.combatants["星沢羽"]
+    c.actor.attacks = [AS(name="火球术", kind="spell", save_dc=14, save_stat="dex",
+                          range_ft=(150, 0), damage="8d6", damage_type="火焰",
+                          aoe_radius_ft=20)]
+    P.save_encounter(enc, tmp_path / "campaigns" / "t")
+    client = make_client(tmp_path, monkeypatch)
+    # 中心取哥布林所在格 (3,4) → 覆盖到它；注入 d20=5 必不过 DC14 → 全伤
+    r = post_action(client, action="cast", actor="星沢羽", attack="火球术",
+                    center=[3, 4], radius=20, injected={"d20": 5})
+    j = r.get_json()
+    assert r.status_code == 200 and j["ok"]
+    line = "\n".join(j["lines"])
+    assert "半径" in line and "豁免" in line
+    assert j["state"]["combatants"]["哥布林"]["hp"] < 7   # 命中结算落盘
+
+
+def test_action_inject_out_of_range_400(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="attack", actor="星沢羽", target="哥布林",
+                    attack="短弓", injected={"d20": 99})
+    j = r.get_json()
+    assert r.status_code == 400
+    assert "1" in j["error"] and "20" in j["error"]
+
+
+def test_state_payload_new_fields(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    st = client.get("/battle/state").get_json()["state"]
+    c = st["combatants"]["星沢羽"]
+    assert c["dodging"] is False and c["disengaged"] is False
+    assert c["initiative_d20"] is not None
