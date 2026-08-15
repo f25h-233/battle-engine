@@ -86,6 +86,16 @@ def cmd_add_monster(enc: Encounter, args) -> None:
 
 
 def cmd_add_player(enc: Encounter, args) -> None:
+    if args.hp_roll:
+        try:
+            hp = dice.roll_hp(args.hp_roll)
+        except ValueError as e:
+            raise ActionError(f"--hp-roll 格式错误: {e}")
+        print(f"  （--hp-roll {args.hp_roll} → HP {hp}）")
+    elif args.hp is None:
+        raise ActionError("需要 --hp 或 --hp-roll 之一")
+    else:
+        hp = args.hp
     attacks = []
     for spec in args.attack or []:
         # "短弓:+5:1d6+3:穿刺:80/320"
@@ -99,7 +109,7 @@ def cmd_add_player(enc: Encounter, args) -> None:
                 rng = (int(parts[4]), 0)
             attacks.append(AttackSpec(name=parts[0], attack_bonus=int(parts[1]),
                                       damage=parts[2], damage_type=parts[3], range_ft=rng))
-    actor = Actor(name=args.name, kind="pc", ac=args.ac, max_hp=args.hp,
+    actor = Actor(name=args.name, kind="pc", ac=args.ac, max_hp=hp,
                   speed_ft=args.speed, dex_mod=args.dex_mod, attacks=attacks)
     cid = enc.add_combatant(actor, x=args.x, y=args.y, cid=args.name)
     print(f"  + {cid.id}（AC {actor.ac}，HP {actor.max_hp}，速度 {actor.speed_ft}ft）")
@@ -129,7 +139,7 @@ def cmd_waypoint(enc: Encounter, args) -> None:
 def cmd_init(enc: Encounter) -> None:
     ordered = enc.roll_initiative()
     for c in ordered:
-        print(f"  {c.id}: d20 + {c.actor.dex_mod} = {c.initiative}")
+        print(f"  {c.id}: d20({c.initiative_d20}) + {c.actor.dex_mod} = {c.initiative}")
     _save(enc)
 
 
@@ -151,11 +161,28 @@ def cmd_attack(enc: Encounter, args) -> None:
 
 
 def cmd_cast(enc: Encounter, args) -> None:
-    targets = [t.strip() for t in args.targets.split(",") if t.strip()]
+    targets = [t.strip() for t in args.targets.split(",") if t.strip()] if args.targets else []
+    center = None
+    if args.point:
+        pos = _parse_pos(args.point)
+        if pos is None:
+            raise ActionError(f"--point 格式错误: {args.point}（应为 x,y）")
+        center = pos
+    if center is not None and targets:
+        raise ActionError("--point 与 --targets 互斥（AoE 用中心+半径，单目标用 targets）")
+    radius = args.radius
+    if center is not None and radius is None:
+        spell = srd.find_spell(args.name)
+        if spell is not None:
+            radius = srd.spell_aoe_radius(spell)
+        if radius is None:
+            radius = 0
+            print("  （未从 SRD 解析到半径——按仅中心格结算，可用 --radius 指定）")
     r = R.resolve_spell(enc, args.actor.lower().replace(" ", ""), args.name,
                         [t.lower().replace(" ", "") for t in targets],
                         dc=args.dc, stat=args.stat, damage=args.dmg,
-                        damage_type=args.type)
+                        damage_type=args.type, center=center, radius_ft=radius,
+                        half_on_save=(not args.no_half))
     _print_result(r)
     _save(enc)
 
@@ -315,6 +342,8 @@ def cmd_end(enc: Encounter) -> None:
 
 
 def cmd_recover(args) -> None:
+    if not args.campaign:
+        raise ActionError("缺少 -c/--campaign（recover 需要战役名）")
     enc = P.restore_backup(_campaign_dir(args.campaign))
     print(f"  已从 .bak 恢复战斗（状态 {enc.status}，{len(enc.combatants)} 名战斗员）")
 
@@ -342,9 +371,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = c("add-player", "添加玩家（手动数值；人物卡解析在 M3）")
     s.add_argument("--name", required=True)
     s.add_argument("--ac", type=int, required=True)
-    s.add_argument("--hp", type=int, required=True)
+    s.add_argument("--hp", type=int, help="最大 HP（与 --hp-roll 二选一）")
     s.add_argument("--speed", type=int, default=30)
     s.add_argument("--dex-mod", type=int, default=0)
+    s.add_argument("--hp-roll", help="用骰子式掷 HP（如 2d10+6），与 --hp 互斥")
     s.add_argument("--x", type=int, default=0)
     s.add_argument("--y", type=int, default=0)
     s.add_argument("--attack", action="append", default=[], help="名称:加值:伤害骰:类型:射程(短/长)")
@@ -371,10 +401,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true",
                    help="跳过射程/移动力检查（DM 剧情用，回合门不可跳过）")
 
-    s = c("cast", "施法结算（M1: 豁免型；M3 补 AoE 几何）")
+    s = c("cast", "施法结算（豁免型 / AoE：--point 中心 + 半径）")
     s.add_argument("--actor", required=True)
     s.add_argument("--name", required=True, help="法术名（日志用）")
-    s.add_argument("--targets", required=True, help="逗号分隔目标 id")
+    s.add_argument("--targets", help="逗号分隔目标 id（与 --point 互斥）")
+    s.add_argument("--point", help="AoE 中心坐标 5,5（与 --targets 互斥）")
+    s.add_argument("--radius", type=int, help="AoE 半径 ft（缺省从 SRD 描述解析，解析不到=仅中心格）")
+    s.add_argument("--no-half", action="store_true", help="成功豁免不全伤（默认半伤，5e 火球）")
     s.add_argument("--dc", type=int)
     s.add_argument("--stat", default="dex")
     s.add_argument("--dmg", help="如 3d6")
@@ -437,10 +470,8 @@ def main(argv=None) -> int:
     if not args.cmd:
         build_parser().print_help()
         return 1
-    if args.cmd == "recover":
-        cmd_recover(args)
-        return 0
-    if not args.campaign:
+    # recover 也走统一分发（其缺 -c 的 ActionError 需要被 try 捕获）
+    if not args.campaign and args.cmd != "recover":
         print("错误: 缺少 -c/--campaign", file=sys.stderr)
         return 1
     enc = _load(args.campaign)
@@ -469,8 +500,13 @@ def main(argv=None) -> int:
          "undo": lambda: cmd_undo(enc),
          "next-turn": lambda: cmd_next_turn(enc),
          "end": lambda: cmd_end(enc),
+         "recover": lambda: cmd_recover(args),
          }[args.cmd]()
     except ActionError as e:
+        print(f"!! {e}", file=sys.stderr)
+        return 1
+    except ValueError as e:
+        # 注入校验等 core 层 ValueError → 同样的拒绝原因文案
         print(f"!! {e}", file=sys.stderr)
         return 1
     except KeyError as e:

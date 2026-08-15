@@ -3,6 +3,7 @@ import json
 import sys
 import pytest
 from battle import cli
+from battle.core import dice
 
 CAMP = "cli_test_camp"
 
@@ -132,3 +133,80 @@ def test_undo_stack_persistable_after_push(tmp_path, monkeypatch):
     assert "攻击" in out
     out2 = run_cli("state", "-c", CAMP, "--json")
     assert '"undo_stack"' in out2
+
+
+# ── M3 CLI ────────────────────────────────────────────────────────
+
+def test_cast_aoe_point_radius(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "20x20")
+    run_cli("add-player", "-c", CAMP, "--name", "法师", "--ac", "13", "--hp", "20",
+            "--speed", "30", "--dex-mod", "2")
+    run_cli("add-monster", "-c", CAMP, "--name", "哥布林1", "--monster", "goblin")
+    run_cli("add-monster", "-c", CAMP, "--name", "哥布林2", "--monster", "goblin")
+    run_cli("place", "-c", CAMP, "--name", "法师", "--x", "0", "--y", "0")
+    run_cli("place", "-c", CAMP, "--name", "哥布林1", "--x", "3", "--y", "0")
+    run_cli("place", "-c", CAMP, "--name", "哥布林2", "--x", "9", "--y", "0")
+    run_cli("init", "-c", CAMP)
+    run_cli("start", "-c", CAMP)
+    # 推进到法师的回合（state 的 ► 标记指向当前战斗员；最多 2 次 next-turn 必然轮到她）
+    for _ in range(3):
+        if "► 法师" in run_cli("state", "-c", CAMP):
+            break
+        run_cli("next-turn", "-c", CAMP)
+    out = run_cli("cast", "-c", CAMP, "--actor", "法师", "--name", "火球术",
+                  "--point", "0,0", "--radius", "20", "--dc", "14",
+                  "--stat", "dex", "--dmg", "4d6", "--type", "火焰")
+    assert "火球术" in out and "豁免" in out
+    assert "哥布林1" in out           # 15ft 内在覆盖内 → 有豁免行
+    assert "哥布林2" not in out       # 45ft 外 → 无豁免行（AoE 路径不含范围外目标）
+
+
+def test_cast_point_targets_mutually_exclusive(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "20x20")
+    run_cli("add-player", "-c", CAMP, "--name", "法师", "--ac", "13", "--hp", "20")
+    run_cli("init", "-c", CAMP)
+    run_cli("start", "-c", CAMP)
+    out = run_cli("cast", "-c", CAMP, "--actor", "法师", "--name", "火球术",
+                  "--targets", "哥布林1", "--point", "0,0")
+    assert "互斥" in out
+
+
+def test_add_player_hp_roll(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "10x8")
+    dice.seed(7)
+    run_cli("add-player", "-c", CAMP, "--name", "新人", "--ac", "15", "--hp-roll", "2d6+6")
+    # 种子 7: 2d6 = 3+2=5 → HP 11（brief 原写种子 3——实测种子 3 掷出 [2,5]=7 → 13，恒假）
+    out = run_cli("state", "-c", CAMP, "--json")
+    assert json.loads(out)["combatants"]["新人"]["hp"] == 11
+
+
+def test_recover_requires_campaign(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    out = run_cli("recover")
+    assert "缺少" in out and "-c" in out
+
+
+def test_init_shows_d20_face(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "10x8")
+    run_cli("add-player", "-c", CAMP, "--name", "星沢羽", "--ac", "16", "--hp", "17",
+            "--dex-mod", "2")
+    out = run_cli("init", "-c", CAMP)
+    assert "d20(" in out               # 显示 d20 面值（此前只显示总和）
+
+
+def test_cli_inject_out_of_range(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "10x8")
+    run_cli("add-player", "-c", CAMP, "--name", "星沢羽", "--ac", "16", "--hp", "17",
+            "--speed", "30", "--dex-mod", "2", "--attack", "短弓:+5:1d6+3:穿刺:80/320")
+    run_cli("add-monster", "-c", CAMP, "--name", "哥布林1", "--monster", "goblin")
+    run_cli("place", "-c", CAMP, "--name", "星沢羽", "--x", "0", "--y", "0")
+    run_cli("place", "-c", CAMP, "--name", "哥布林1", "--x", "0", "--y", "3")
+    run_cli("init", "-c", CAMP)
+    out = run_cli("attack", "-c", CAMP, "--actor", "星沢羽", "--target", "哥布林1",
+                  "--inject", "99")
+    assert "1–20" in out               # 注入校验文案
