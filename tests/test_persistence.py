@@ -34,6 +34,16 @@ def test_corrupt_file_raises_with_backup_hint(tmp_path):
         P.load_encounter(str(tmp_path))
 
 
+def test_gbk_bytes_raise_corrupt_value_error(tmp_path):
+    """Minor: GBK 编码的历史 battle.json 是 UnicodeDecodeError 而非 JSONDecodeError
+    ——load 必须把两者都转成"损坏"提示（此前 UnicodeDecodeError 裸抛）。"""
+    P.save_encounter(make_enc(tmp_path), str(tmp_path))
+    path = P.battle_path(str(tmp_path))
+    path.write_bytes('{"战斗": 1}'.encode("gbk"))
+    with pytest.raises(ValueError, match="损坏"):
+        P.load_encounter(str(tmp_path))
+
+
 def test_backup_created_and_restorable(tmp_path):
     enc = make_enc(tmp_path)
     P.save_encounter(enc, str(tmp_path))

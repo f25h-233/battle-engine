@@ -40,7 +40,7 @@ def load_encounter(campaign_dir) -> Encounter | None:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return Encounter.from_dict(data)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):  # GBK 历史档案 → UnicodeDecodeError
         raise ValueError(
             f"{path} 损坏——可用 battle recover 从 .bak 恢复")
 

@@ -72,6 +72,17 @@ def test_add_waypoint_rejects_non_coords():
         enc.add_waypoint("门口", "12,3")
 
 
+def test_start_combat_twice_rejected():
+    """Minor: 重复 start 重入会重置回合资源——必须拒绝。"""
+    enc, a, b = make_encounter()
+    enc.add_combatant(a, x=0, y=0)
+    enc.add_combatant(b, x=1, y=0)
+    enc.roll_initiative()
+    enc.start_combat()
+    with pytest.raises(ActionError, match="战斗已在进行中"):
+        enc.start_combat()
+
+
 def test_turn_gate_active_combat():
     enc, a, b = make_encounter()
     ca = enc.add_combatant(a, x=0, y=0)

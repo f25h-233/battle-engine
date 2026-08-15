@@ -173,6 +173,8 @@ class Encounter:
         return ordered
 
     def start_combat(self) -> None:
+        if self.status == "combat_active":
+            raise ActionError("战斗已在进行中")
         self.assert_combat_ready()
         self.status = "combat_active"
         self.round = 1

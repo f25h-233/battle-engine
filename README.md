@@ -31,7 +31,7 @@ python3 -m battle state -c my-campaign
 
 ## 规则要点
 - 未掷先攻 → 一切攻击/施法被拒（状态门）
-- 非本回合标准动作被拒；`--force` 供 DM 剧情豁免
+- 非本回合标准动作被拒（回合门不可跳过）；`--force` 跳过射程/移动力检查（DM 剧情用）
 - 射程/移动力/回合资源由引擎机械校验
 - 骰子：`--inject` 注入玩家手动结果（roll_mode: players 对齐）
 

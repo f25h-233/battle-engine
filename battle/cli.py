@@ -80,7 +80,7 @@ def cmd_add_monster(enc: Encounter, args) -> None:
     for i in range(1, args.count + 1):
         name = args.name if args.count == 1 else f"{args.name}-{i}"
         cid = enc.add_combatant(actor, x=0, y=0, cid=name)
-        print(f"  + {cid}（{actor.name}，AC {actor.ac}，HP {actor.max_hp}）"
+        print(f"  + {cid.id}（{actor.name}，AC {actor.ac}，HP {actor.max_hp}）"
               + (f"，攻击: {', '.join(a.name for a in actor.attacks)}" if actor.attacks else "（无解析攻击，可 cast/set-hp 手动处理）"))
     _save(enc)
 
@@ -102,7 +102,7 @@ def cmd_add_player(enc: Encounter, args) -> None:
     actor = Actor(name=args.name, kind="pc", ac=args.ac, max_hp=args.hp,
                   speed_ft=args.speed, dex_mod=args.dex_mod, attacks=attacks)
     cid = enc.add_combatant(actor, x=args.x, y=args.y, cid=args.name)
-    print(f"  + {cid}（AC {actor.ac}，HP {actor.max_hp}，速度 {actor.speed_ft}ft）")
+    print(f"  + {cid.id}（AC {actor.ac}，HP {actor.max_hp}，速度 {actor.speed_ft}ft）")
     _save(enc)
 
 
@@ -368,7 +368,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--attack", help="攻击名（缺省用第一个）")
     s.add_argument("--inject", type=int, help="注入 d20 结果（玩家手动掷）")
     s.add_argument("--advantage", choices=["advantage", "disadvantage"])
-    s.add_argument("--force", action="store_true", help="跳过状态门（DM 剧情用）")
+    s.add_argument("--force", action="store_true",
+                   help="跳过射程/移动力检查（DM 剧情用，回合门不可跳过）")
 
     s = c("cast", "施法结算（M1: 豁免型；M3 补 AoE 几何）")
     s.add_argument("--actor", required=True)
@@ -382,7 +383,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = c("move", "移动")
     s.add_argument("--actor", required=True)
     s.add_argument("--to", required=True, help="坐标 12,3 或地标名")
-    s.add_argument("--force", action="store_true")
+    s.add_argument("--force", action="store_true",
+                   help="跳过射程/移动力检查（DM 剧情用，回合门不可跳过）")
 
     for name in ("dash", "dodge", "disengage"):
         s = c(name, f"{name} 动作")

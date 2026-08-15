@@ -49,7 +49,7 @@ def _enemy_within(enc, cid: str, dist_ft: int) -> list:
 
 def collect_advantage(enc, attacker_id: str, target_id: str,
                       attack: Optional[AttackSpec], explicit: Optional[str]) -> dict:
-    """Advantage sources (M1): explicit flag, prone, blinded, unconscious,
+    """Advantage sources (M1): explicit flag, prone, unconscious,
     ranged-while-adjacent-enemy. Returns {advantage, disadvantage, reasons}."""
     att = enc.combatants[attacker_id]
     tgt = enc.combatants[target_id]
@@ -288,7 +288,7 @@ def resolve_save(enc, target_id: str, dc: int, stat: str,
 
 def resolve_death_save(enc, combatant_id: str,
                        *, injected_d20: Optional[int] = None) -> ResolutionResult:
-    """Death saving throw: 10+ success, 9- failure, 20 → stable, 1 → 2 failures."""
+    """Death saving throw: 10+ success, 9- failure, 20 → 恢复 1 HP 并苏醒, 1 → 2 failures."""
     c = enc.combatants[combatant_id]
     if c.hp > 0:
         raise ActionError(f"{c.id} 尚未倒下")
