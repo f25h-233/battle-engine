@@ -190,3 +190,30 @@ def test_move_multiple_steps_single_aoo():
     r = R.resolve_move(enc, cpc.id, (3, 8))       # 走 5 步垂直离开 gob 范围
     assert "\n".join(r.lines).count("借机攻击") == 1
     assert cg.reaction_used is True
+
+
+def test_two_enemies_both_trigger_aoo():
+    """双敌夹击：同一格步同时离开两个敌人的近战范围 → 各触发一次。
+    两敌分列左右（A(2,3)、B(4,3)），pc 单步移到 (3,4) 同时离开两者——
+    路径终点即离开步。修复前 for foe in foes 迭代中 remove 会跳过
+    被删元素之后的下一个（此处为 B），B 永不出手；list(foes) 副本修复。
+    （reviewer 原几何 A(4,3)、B(3,4)→(3,6) 实测修复前也触发 2 次——
+    B 只是晚一步触发，抓不到该 bug，故改用本几何。）"""
+    enc = Encounter(campaign="aoo3", width=20, height=20)
+    pc = Actor(name="星沢羽", kind="pc", ac=16, max_hp=30, speed_ft=30, dex_mod=2)
+    gobA = Actor(name="哥布林A", kind="npc", ac=15, max_hp=7, speed_ft=30, dex_mod=1,
+                 attacks=[DAGGER])
+    gobB = Actor(name="哥布林B", kind="npc", ac=15, max_hp=7, speed_ft=30, dex_mod=1,
+                 attacks=[DAGGER])
+    cpc = enc.add_combatant(pc, x=3, y=3)
+    ca = enc.add_combatant(gobA, x=2, y=3)
+    cb = enc.add_combatant(gobB, x=4, y=3)
+    enc.roll_initiative()
+    enc.start_combat()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    r = R.resolve_move(enc, cpc.id, (3, 4))
+    lines = "\n".join(r.lines)
+    assert lines.count("借机攻击") == 2
+    assert ca.reaction_used is True
+    assert cb.reaction_used is True

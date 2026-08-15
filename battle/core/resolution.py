@@ -346,7 +346,7 @@ def resolve_move(enc, combatant_id: str, dest, *, force: bool = False) -> Resolu
         c.x, c.y = step
         walked += 1
         if not c.disengaged:
-            for foe in foes:
+            for foe in list(foes):        # 副本迭代：remove 后迭代器不跳号（多敌场景）
                 if enc.map.distance_ft(foe, c) > _melee_reach(foe):
                     sub = resolve_aoo(enc, c.id, foe.id, injected_d20=None)
                     r.lines.extend(sub.lines)
@@ -389,7 +389,7 @@ def resolve_dash(enc, combatant_id: str, dest) -> ResolutionResult:
     for step in _manhattan_path(enc, c, dest):
         c.x, c.y = step
         if not c.disengaged:
-            for foe in foes:
+            for foe in list(foes):        # 副本迭代：remove 后迭代器不跳号（多敌场景）
                 if enc.map.distance_ft(foe, c) > _melee_reach(foe):
                     sub = resolve_aoo(enc, c.id, foe.id, injected_d20=None)
                     r.lines.extend(sub.lines)
