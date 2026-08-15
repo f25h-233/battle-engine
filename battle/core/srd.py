@@ -11,6 +11,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 from pathlib import Path
 
 from . import monster_parser
@@ -83,7 +84,8 @@ def monster_to_actor(entry: dict, *, hp_avg: bool = True) -> Actor:
     attacks = monster_parser.parse_monster_actions(entry)
     hp = entry.get("hp", 1)
     speed = 30
-    m = __import__("re").match(r"(\d+)\s*ft\.", str(entry.get("speed", "")))
+    sp = str(entry.get("speed", ""))
+    m = re.search(r"walk\s*(\d+)\s*ft\.", sp) or re.match(r"(\d+)\s*ft\.", sp)
     if m:
         speed = int(m.group(1))
     return Actor(
