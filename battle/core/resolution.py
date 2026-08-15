@@ -286,8 +286,11 @@ def resolve_death_save(enc, combatant_id: str,
     d20 = dice.roll_d20(injected=injected_d20)
     r = ResolutionResult()
     if d20["d20"] == 20:
-        c.death_saves = {"successes": 3, "failures": 0, "stable": True}
-        r.add(f"{c.id} 死亡豁免: d20({d20['d20']}) = 20 —— 苏醒且稳定!")
+        c.hp = 1
+        if "unconscious" in c.conditions:
+            c.conditions.remove("unconscious")
+        c.death_saves = {"successes": 0, "failures": 0, "stable": False}
+        r.add(f"{c.id} 死亡豁免: d20({d20['d20']}) = 20 —— 恢复 1 HP 并苏醒!")
     elif d20["d20"] == 1:
         c.death_saves["failures"] = min(3, c.death_saves["failures"] + 2)
         r.add(f"{c.id} 死亡豁免: d20({d20['d20']}) = 1 —— 两次失败!")

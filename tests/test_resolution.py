@@ -51,7 +51,7 @@ def test_attack_crit_doubles_dice():
     r = R.resolve_attack(enc, cpc.id, cg1.id, DAGGER, injected_d20=20, force=True)
     assert "暴击" in "\n".join(r.lines)
     # 暴击翻倍骰后伤害应大于单次骰+修正
-    assert r.hp_after[cg1.id] <= r.hp_before[cg1.id] - 7  # 宽松区间（种子 7: 1d4=3,3 → 伤害 8）
+    assert r.hp_after[cg1.id] <= r.hp_before[cg1.id] - 7  # 种子 7: 1d4 序列 3,2 → 暴击伤害 (3+3)+2=8
 
 
 def test_temp_hp_absorbed_first():
@@ -89,6 +89,16 @@ def test_death_save_success_and_failure():
         R.resolve_death_save(enc, cg1.id, injected_d20=8)
     assert cg1.death_saves["failures"] == 3 and not cg1.alive
     assert cg1.death_saves.get("stable") is False  # 3 失败 = 死亡
+
+
+def test_death_save_nat20_recovers_hp():
+    enc, cpc, cg1, cg2 = enc_factory()
+    cg1.hp = 0
+    cg1.conditions.append("unconscious")
+    R.resolve_death_save(enc, cg1.id, injected_d20=20)
+    assert cg1.hp == 1
+    assert "unconscious" not in cg1.conditions
+    assert cg1.death_saves["failures"] == 0
 
 
 def test_save_resolution():
