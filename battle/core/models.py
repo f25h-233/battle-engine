@@ -266,7 +266,7 @@ class Encounter:
                 },
             } for k, c in self.combatants.items()},
             "log": self.log,
-            "undo_stack": self.undo_stack,
+            "undo_stack": list(self.undo_stack),  # 拷贝：避免 push_undo 后快照自引用 → json 循环引用
         }
 
     @classmethod
