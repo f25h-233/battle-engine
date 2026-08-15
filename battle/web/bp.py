@@ -41,7 +41,10 @@ def _campaign_name() -> str:
         return env
     camp_file = current_app.config.get("BATTLE_CAMPAIGN_FILE") or ""
     if camp_file and os.path.exists(camp_file):
-        name = Path(camp_file).read_text(encoding="utf-8").strip()
+        try:
+            name = Path(camp_file).read_text(encoding="utf-8").strip()
+        except (OSError, ValueError):   # 读不了/GBK 等历史编码 → 视为未设置
+            name = ""
         if name:
             return name
     return ""
@@ -56,7 +59,10 @@ def _campaign_dir() -> Path:
 
 
 def _load() -> Encounter:
-    enc = P.load_encounter(_campaign_dir())
+    try:
+        enc = P.load_encounter(_campaign_dir())
+    except ValueError:
+        raise ActionError("battle.json 损坏——可用 CLI: battle recover 从 .bak 恢复")
     if enc is None:
         raise ActionError("该战役没有战斗（battle.json 不存在）——"
                           "先用 CLI: python -m battle create -c <战役名>")
@@ -126,6 +132,8 @@ def action():
         body = request.get_json(force=True) or {}
     except Exception:
         return jsonify({"ok": False, "error": "JSON 请求体无效"}), 400
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "JSON 请求体无效"}), 400
     try:
         enc = _load()
         result = _dispatch_action(enc, body)
@@ -160,6 +168,8 @@ def roll():
         body = request.get_json(force=True) or {}
     except Exception:
         return jsonify({"ok": False, "error": "JSON 请求体无效"}), 400
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "JSON 请求体无效"}), 400
     spec = str(body.get("spec", "1d20")).strip()
     try:
         if spec == "1d20":
@@ -193,7 +203,7 @@ def _stream_events(camp_dir, interval: float = _POLL_SECONDS):
                     yield {"state": None, "error": "无 battle.json（战斗文件不存在）"}
                 else:
                     yield {"state": _state_payload(enc)}
-            except Exception as e:
+            except (ValueError, OSError) as e:   # 损坏→ValueError；stat/读→OSError
                 yield {"error": f"battle.json 损坏: {e}（可用 CLI: battle recover 从 .bak 恢复）"}
         else:
             yield ": keepalive"
@@ -301,5 +311,8 @@ def _resolve_attack_spec(enc: Encounter, cid: str, name):
 
 def _coords(value):
     if isinstance(value, list) and len(value) == 2:
-        return (int(value[0]), int(value[1]))
-    raise ActionError("to 参数需要 [x, y] 坐标")
+        try:
+            return (int(value[0]), int(value[1]))
+        except (TypeError, ValueError):
+            pass
+    raise ActionError("to 参数需要 [x, y] 整数坐标")

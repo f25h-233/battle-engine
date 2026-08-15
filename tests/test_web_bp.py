@@ -65,6 +65,16 @@ def test_state_endpoint_without_battle_file(tmp_path, monkeypatch):
     assert "没有战斗" in r.get_json()["error"]
 
 
+def test_state_endpoint_corrupt_battle_file(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    battle_file = tmp_path / "campaigns" / "t" / "battle.json"
+    battle_file.write_text("{ not valid json !!!", encoding="utf-8")
+    client = make_client(tmp_path, monkeypatch)
+    r = client.get("/battle/state")
+    assert r.status_code == 404
+    assert "损坏" in r.get_json()["error"]
+
+
 def test_state_endpoint_without_campaign(tmp_path, monkeypatch):
     monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
     app = Flask(__name__)                             # 无 BATTLE_CAMPAIGN_FILE、无 env

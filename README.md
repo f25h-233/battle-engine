@@ -57,7 +57,7 @@ python3 -m pytest -q
 | `GET /battle/` | 面板页面 |
 | `GET /battle/state` | 状态快照（无 undo_stack，日志 ≤50 条） |
 | `POST /battle/action` | 玩家动作：`{"action":"attack|cast|move|dash|dodge|disengage|death_save|end_turn","actor":"…","target":"…","attack":"…","to":[x,y],"injected":{"d20":n,"damage":[..]}}` |
-| `POST /battle/roll` | 服务器掷骰 `{"spec":"1d20|2d6+3","advantage":…}` |
+| `POST /battle/roll` | 服务器掷骰 `{"spec":"1d20|2d6+3","advantage":…（advantage 仅 1d20 生效）}` |
 | `GET /battle/stream` | SSE：状态变化推送（轮询 battle.json mtime） |
 
 战役解析：`BATTLE_CAMPAIGN` 环境变量优先，否则显示端 `.campaign` 运行时文件。LAN 模式 POST 需 `X-DND-Token`（显示端自动注入页面）。

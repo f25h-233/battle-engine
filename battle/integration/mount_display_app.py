@@ -64,7 +64,7 @@ def main(argv=None) -> int:
     p = Path(target)
     try:
         changed = apply(p, dry_run=dry)
-    except ValueError as e:
+    except (ValueError, OSError) as e:   # FileNotFoundError 等属 OSError
         print(f"!! {e}", file=sys.stderr)
         return 1
     if changed:
