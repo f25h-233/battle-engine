@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="dnd-token" content="{{ lan_token }}">
+  <title>战斗面板 — 引擎</title>
+  <link rel="stylesheet" href="{{ url_for('battle.static', filename='battle.css') }}">
+</head>
+<body>
+  <header>
+    <div class="h-title">⚔ 战斗引擎 <span id="campaign-name"></span></div>
+    <span id="status-badge">—</span>
+    <span id="round-badge"></span>
+    <div class="h-controls">
+      <label>我是 <select id="identity-select"><option value="">—</option></select></label>
+      <label class="manual-toggle"><input type="checkbox" id="dash-toggle"> 冲刺</label>
+      <label class="manual-toggle"><input type="checkbox" id="manual-dice"> 手动掷</label>
+    </div>
+  </header>
+
+  <section id="initiative-bar"></section>
+
+  <main id="battle-main">
+    <section id="grid-wrap">
+      <div id="grid" role="grid" aria-label="战斗网格"></div>
+      <div id="grid-legend">黄色格=移动 · 蓝格=冲刺 · 红圈=射程内 · 点击敌方 token 结算攻击</div>
+    </section>
+    <aside id="action-panel">
+      <div id="selected-info">未选择目标</div>
+      <div id="turn-banner">加载中…</div>
+      <div id="attack-buttons"></div>
+      <div id="misc-buttons"></div>
+      <div id="manual-dice-box" hidden>
+        <label>d20 <input type="number" id="inject-d20" min="1" max="20" placeholder="15"></label>
+        <label>伤害骰 <input type="text" id="inject-damage" placeholder="如 4,2"></label>
+      </div>
+      <div id="action-message" class="msg"></div>
+    </aside>
+  </main>
+
+  <section id="log-panel"><div id="log-list"></div></section>
+
+  <script src="{{ url_for('battle.static', filename='battle.js') }}"></script>
+</body>
+</html>
