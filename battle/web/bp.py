@@ -120,7 +120,115 @@ def state():
 
 @battle_bp.route("/action", methods=["POST"])
 def action():
-    """动作入口（骨架：仅令牌门禁；动作分派在后续任务实现）。"""
     if not _token_ok():
         return jsonify({"ok": False, "error": "令牌无效"}), 401
-    return jsonify({"ok": True, "error": None})
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False, "error": "JSON 请求体无效"}), 400
+    try:
+        enc = _load()
+        result = _dispatch_action(enc, body)
+        _save(enc)
+        return jsonify({
+            "ok": result.ok,
+            "lines": result.lines,
+            "errors": result.errors,
+            "hp_before": result.hp_before,
+            "hp_after": result.hp_after,
+            "error": None,
+            "state": _state_payload(enc),
+        })
+    except ActionError as e:
+        payload = None
+        try:
+            payload = _state_payload(_load())
+        except ActionError:
+            pass
+        return jsonify({"ok": False, "error": str(e), "state": payload}), 400
+    except KeyError as e:
+        return jsonify({"ok": False, "error": f"战斗员不存在: {e}",
+                        "state": None}), 404
+
+
+def _dispatch_action(enc: Encounter, body: dict) -> R.ResolutionResult:
+    """动作分派：end_turn 无需 actor；其余需 actor + 战斗员在场。
+
+    actor id 归一化与 CLI 相同：lower + 去空格（中文名即原样）。
+    """
+    action = body.get("action", "")
+    injected = body.get("injected") or {}
+    inj_d20 = injected.get("d20")
+    inj_dmg = None
+    if isinstance(injected.get("damage"), list):
+        inj_dmg = [int(v) for v in injected["damage"]
+                   if isinstance(v, (int, float))]
+
+    if action == "end_turn":
+        enc.next_turn()
+        r = R.ResolutionResult()
+        cur = enc.current()
+        r.add(f"第 {enc.round} 回合 —— 轮到: {cur.id if cur else '—'}")
+        return r
+
+    cid = str(body.get("actor", "")).strip().lower().replace(" ", "")
+    if not cid:
+        raise ActionError("缺少 actor（你是谁？）")
+    if cid not in enc.combatants:
+        raise KeyError(cid)                 # 404：与目标不存在同一错误码
+
+    if action == "attack":
+        tgt = str(body.get("target", "")).strip().lower().replace(" ", "")
+        if not tgt:
+            raise ActionError("攻击需要目标")
+        atk = _resolve_attack_spec(enc, cid, body.get("attack"))
+        return R.resolve_attack(enc, cid, tgt, atk,
+                                injected_d20=inj_d20, injected_damage=inj_dmg,
+                                advantage=body.get("advantage"),
+                                force=bool(body.get("force")))
+
+    if action == "cast":
+        tgt = str(body.get("target", "")).strip().lower().replace(" ", "")
+        if not tgt:
+            raise ActionError("施法需要目标")
+        atk = _resolve_attack_spec(enc, cid, body.get("attack"))
+        spell = body.get("spell") or (atk.name if atk else "施法")
+        return R.resolve_spell(enc, cid, spell, [tgt],
+                               attack=atk, injected_d20=inj_d20,
+                               injected_damage=inj_dmg,
+                               force=bool(body.get("force")))
+
+    if action == "move":
+        return R.resolve_move(enc, cid, _coords(body.get("to")),
+                              force=bool(body.get("force")))
+
+    if action == "dash":
+        return R.resolve_dash(enc, cid, _coords(body.get("to")))
+
+    if action == "dodge":
+        return R.resolve_dodge(enc, cid)
+
+    if action == "disengage":
+        return R.resolve_disengage(enc, cid)
+
+    if action == "death_save":
+        return R.resolve_death_save(enc, cid, injected_d20=inj_d20)
+
+    raise ActionError(f"未知动作: {action}")
+
+
+def _resolve_attack_spec(enc: Encounter, cid: str, name):
+    """按名字取攻击/法术攻击；未指定 → 第一个（core 行为）；找不到 → 报因。"""
+    actor = enc.combatants[cid].actor
+    if not name:
+        return None
+    atk = actor.attack(name)
+    if atk is None:
+        raise ActionError(f"{cid} 没有攻击 {name}")
+    return atk
+
+
+def _coords(value):
+    if isinstance(value, list) and len(value) == 2:
+        return (int(value[0]), int(value[1]))
+    raise ActionError("to 参数需要 [x, y] 坐标")

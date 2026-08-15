@@ -109,3 +109,119 @@ def test_post_no_token_in_localhost_mode(tmp_path, monkeypatch):
     client = make_client(tmp_path, monkeypatch)       # token=None → localhost 免检
     r = client.post("/battle/action", json={"action": "end_turn"})
     assert r.status_code == 200
+
+
+# ── POST /battle/action ──────────────────────────────────────────
+
+def post_action(client, **body):
+    return client.post("/battle/action", json=body)
+
+
+def test_action_attack_happy_path(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="attack", actor="星沢羽", target="哥布林",
+                    attack="短弓", injected={"d20": 15})
+    j = r.get_json()
+    assert r.status_code == 200 and j["ok"]
+    assert j["hp_after"]["哥布林"] < j["hp_before"]["哥布林"]
+    assert j["state"]["combatants"]["哥布林"]["hp"] < 7
+    # 已写盘：从磁盘重载确认（CLI 与 Web 共享单一事实源）
+    enc = P.load_encounter(tmp_path / "campaigns" / "t")
+    assert enc.combatants["哥布林"].hp < 7
+    assert any("命中" in l for l in j["lines"])
+
+
+def test_action_attack_manual_dice(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="attack", actor="星沢羽", target="哥布林",
+                    attack="短弓", injected={"d20": 15, "damage": [4, 2]})
+    j = r.get_json()
+    assert r.status_code == 200 and j["ok"]
+    assert j["hp_after"]["哥布林"] == 0             # 注入伤害 4+2+3=9 > 哥布林 7 HP → 归零
+    line = "\n".join(j["lines"])
+    assert "注入" in line and "9" in line           # 注入路径执行且骰面和修正精确
+
+
+def test_action_turn_gate_rejected(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    # 把当前行动者换成 哥布林
+    enc = P.load_encounter(tmp_path / "campaigns" / "t")
+    enc.next_turn()
+    P.save_encounter(enc, tmp_path / "campaigns" / "t")
+    r = post_action(client, action="attack", actor="星沢羽", target="哥布林",
+                    attack="短弓", injected={"d20": 15})
+    j = r.get_json()
+    assert r.status_code == 400
+    assert "回合" in j["error"]
+    assert j["state"]["combatants"]["哥布林"]["hp"] == 7  # 状态未被污染
+
+
+def test_action_unknown_actor(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="attack", actor="幽灵", target="哥布林")
+    assert r.status_code == 404
+    assert "不存在" in r.get_json()["error"]
+
+
+def test_action_unknown_target(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="attack", actor="星沢羽", target="幽灵")
+    assert r.status_code == 404
+    assert "不存在" in r.get_json()["error"]
+
+
+def test_action_unknown_action(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="dance", actor="星沢羽")
+    assert r.status_code == 400
+    assert "未知动作" in r.get_json()["error"]
+
+
+def test_action_move_and_dash(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="move", actor="星沢羽", to=[1, 0])
+    assert r.status_code == 200 and r.get_json()["ok"]
+    st = r.get_json()["state"]
+    assert st["combatants"]["星沢羽"]["x"] == 1
+    assert st["combatants"]["星沢羽"]["movement_left_ft"] == 25  # 30 - 5ft
+    r2 = post_action(client, action="dash", actor="星沢羽", to=[4, 0])  # 15ft ≤ 30ft
+    assert r2.status_code == 200 and r2.get_json()["ok"]
+    assert r2.get_json()["state"]["combatants"]["星沢羽"]["x"] == 4
+    assert r2.get_json()["state"]["combatants"]["星沢羽"]["acted"] is True
+
+
+def test_action_dodge_disengage(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="dodge", actor="星沢羽")
+    assert r.status_code == 200 and r.get_json()["ok"]
+    assert r.get_json()["state"]["combatants"]["星沢羽"]["acted"] is True
+    r2 = post_action(client, action="disengage", actor="星沢羽")  # 动作已用 → 拒绝
+    assert r2.status_code == 400
+
+
+def test_action_death_save(tmp_path, monkeypatch):
+    enc = make_encounter(tmp_path)
+    enc.combatants["星沢羽"].hp = 0
+    P.save_encounter(enc, tmp_path / "campaigns" / "t")
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="death_save", actor="星沢羽", injected={"d20": 10})
+    assert r.status_code == 200 and r.get_json()["ok"]
+    assert r.get_json()["state"]["combatants"]["星沢羽"]["death_saves"]["successes"] == 1
+
+
+def test_action_end_turn_advances(tmp_path, monkeypatch):
+    make_encounter(tmp_path)
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="end_turn")
+    j = r.get_json()
+    assert r.status_code == 200 and j["ok"]
+    assert j["state"]["turn_index"] == 1
+    assert j["state"]["turn_order"][1] in ("哥布林",)  # 星沢羽 后必是 哥布林
