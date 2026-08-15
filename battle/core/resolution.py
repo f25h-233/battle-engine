@@ -79,6 +79,8 @@ def collect_advantage(enc, attacker_id: str, target_id: str,
             adv, reasons = True, reasons + ["目标俯卧（近战优势）"]
         else:
             disadv, reasons = True, reasons + ["目标俯卧（远程劣势）"]
+    if tgt.hp > 0 and tgt.dodging:
+        disadv, reasons = True, reasons + ["目标闪避中"]
     if att.hp <= 0 or "unconscious" in att.conditions:
         disadv = True
         reasons.append("昏迷")
@@ -217,7 +219,10 @@ def resolve_spell(enc, caster_id: str, spell_name: str, targets: list,
     r.hp_before = _snapshot_hp(enc, *targets)
     for tid in targets:
         t = enc.combatants[tid]
-        d20 = dice.roll_d20(injected=injected_d20)
+        adv = "advantage" if (t.dodging and stat == "dex") else None
+        d20 = dice.roll_d20(injected=injected_d20, advantage=adv)
+        if adv:
+            r.add(f"{t.id} 闪避中——敏捷豁免优势")
         passed = d20["total"] >= (dc or 10)
         r.add(f"{t.id} 豁免 {stat} vs DC {dc}: d20({d20['d20']}) + mod = {d20['total']} → {'成功' if passed else '失败'}")
         if not passed and damage:
@@ -294,7 +299,8 @@ def resolve_dodge(enc, combatant_id: str) -> ResolutionResult:
         raise ActionError(f"{c.id} 本回合已用动作")
     enc.push_undo()  # 首个状态变更之前
     r = ResolutionResult()
-    r.add(f"{c.id} 闪避（本回合攻击劣势）")
+    r.add(f"{c.id} 闪避（直到下回合开始：攻击掷骰劣势、敏捷豁免优势）")
+    c.dodging = True
     c.acted = True
     enc.record(action="dodge", combatant=combatant_id, lines=r.lines)
     return r
@@ -308,6 +314,7 @@ def resolve_disengage(enc, combatant_id: str) -> ResolutionResult:
     enc.push_undo()  # 首个状态变更之前
     r = ResolutionResult()
     r.add(f"{c.id} 脱离（本回合移动不触发借机攻击）")
+    c.disengaged = True
     c.acted = True
     enc.record(action="disengage", combatant=combatant_id, lines=r.lines)
     return r

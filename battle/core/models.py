@@ -64,6 +64,8 @@ class Combatant:
     bonus_acted: bool = False
     reaction_used: bool = False
     movement_left_ft: int = 0
+    dodging: bool = False
+    disengaged: bool = False
     death_saves: dict = field(default_factory=lambda: {"successes": 0, "failures": 0, "stable": False})
 
     @property
@@ -192,6 +194,8 @@ class Encounter:
         c.bonus_acted = False
         c.reaction_used = False
         c.movement_left_ft = c.actor.speed_ft
+        c.dodging = False          # 闪避效果直到自己的下回合开始（本回合结束时重置）
+        c.disengaged = False       # 脱离效果只覆盖本回合
 
     def turn_end(self, cid: str) -> None:
         c = self.combatants[cid]
@@ -255,6 +259,7 @@ class Encounter:
                 "initiative": c.initiative, "acted": c.acted,
                 "bonus_acted": c.bonus_acted, "reaction_used": c.reaction_used,
                 "movement_left_ft": c.movement_left_ft,
+                "dodging": c.dodging, "disengaged": c.disengaged,
                 "death_saves": c.death_saves,
                 "actor": {
                     "name": c.actor.name, "kind": c.actor.kind, "ac": c.actor.ac,
@@ -299,6 +304,8 @@ class Encounter:
                           bonus_acted=cd.get("bonus_acted", False),
                           reaction_used=cd.get("reaction_used", False),
                           movement_left_ft=cd.get("movement_left_ft", 0),
+                          dodging=cd.get("dodging", False),
+                          disengaged=cd.get("disengaged", False),
                           death_saves=cd.get("death_saves", {"successes": 0, "failures": 0, "stable": False}))
             enc.combatants[k] = c
         enc.log = d.get("log", [])
