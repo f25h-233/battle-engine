@@ -63,3 +63,18 @@ def test_round_wraps():
     enc.next_turn()   # 两人战斗绕回
     assert enc.round == 2
     assert enc.current().id == first
+
+
+def test_turn_gate_active_combat():
+    enc, a, b = make_encounter()
+    ca = enc.add_combatant(a, x=0, y=0)
+    cb = enc.add_combatant(b, x=1, y=0)
+    enc.roll_initiative()
+    enc.start_combat()
+    cur = enc.current()
+    enc.assert_turn(cur.id)                     # 本回合标准动作通过
+    other = cb.id if cur.id == ca.id else ca.id
+    with pytest.raises(ActionError, match="回合"):
+        enc.assert_turn(other)                  # 非本回合被拒
+    enc.assert_turn(other, reaction=True)       # 反应豁免通过
+    enc.assert_turn(other, legendary=True)      # 传说豁免通过

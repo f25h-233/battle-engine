@@ -139,7 +139,7 @@ class Encounter:
 
     # ── state gates ─────────────────────────────────────────────
     def assert_combat_ready(self) -> None:
-        if self.status != "initiative_rolled":
+        if self.status not in ("initiative_rolled", "combat_active"):
             raise ActionError(f"战斗尚未掷先攻（当前状态: {self.status}）")
 
     def assert_turn(self, cid: str, *, reaction: bool = False,
