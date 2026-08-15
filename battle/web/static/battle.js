@@ -261,7 +261,7 @@ function renderActions() {
   mb.innerHTML += `<button data-action="undo">撤销</button>`;
   if (who && selAttack && pendingCenter && S) {
     const atk = (who.attacks || []).find((a) => a.name === selAttack);
-    mb.innerHTML += `<button data-action="cast_aoe" class="primary">施放 ${selAttack} @(${pendingCenter[0]},${pendingCenter[1]})</button>`;
+    mb.innerHTML += `<button data-action="cast_aoe" data-name="${selAttack}" class="primary">施放 ${selAttack} @(${pendingCenter[0]},${pendingCenter[1]})</button>`;
     mb.innerHTML += `<button data-action="cancel_aoe">取消 AoE</button>`;
   }
   mb.innerHTML += `<button data-action="end_turn" class="primary" ` +
@@ -306,7 +306,10 @@ function registerHandlers() {
     } else if (act === "undo") {
       postAction("undo", {});
     } else if (act === "cast_aoe") {
-      postAction("cast", { attack: name, center: pendingCenter });
+      const caster = me();
+      const atkAoe = caster && (caster.attacks || []).find((a) => a.name === name);
+      postAction("cast", { attack: name, center: pendingCenter,
+                           radius: atkAoe ? atkAoe.aoe_radius_ft : undefined });
     } else if (act === "cancel_aoe") {
       pendingCenter = null;
       renderGrid();
@@ -351,6 +354,12 @@ function tokenClick(id) {
   if (who && myTurn() && !who.acted && id !== identity && tgt.hp > 0 && selAttack) {
     const atk = (who.attacks || []).find((a) => a.name === selAttack);
     if (atk) {
+      if (atk.aoe_radius_ft) {
+        pendingCenter = [tgt.x, tgt.y];   // AoE 预览：点敌方 token 也只是选中心
+        renderGrid();
+        setMsg(`AoE 中心 (${tgt.x},${tgt.y})——点「施放」结算`, "ok");
+        return;
+      }
       const rng = atk.range_ft[1] || atk.range_ft[0];
       const d = dist(who, tgt);
       if (d <= rng) {

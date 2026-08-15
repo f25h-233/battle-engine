@@ -288,9 +288,16 @@ def _dispatch_action(enc: Encounter, body: dict) -> R.ResolutionResult:
             center = _coords(body.get("center"))
         if center is not None:
             radius = body.get("radius")
+            radius_ft = None
+            if radius is not None:
+                try:
+                    radius_ft = int(radius)
+                except (TypeError, ValueError):
+                    raise ActionError("radius 需要整数英尺")
+            elif atk is not None and atk.aoe_radius_ft is not None:
+                radius_ft = atk.aoe_radius_ft     # 面板不传 radius → 回退攻击自带半径
             return R.resolve_spell(enc, cid, spell, [], attack=atk,
-                                   center=center,
-                                   radius_ft=int(radius) if radius is not None else None,
+                                   center=center, radius_ft=radius_ft,
                                    injected_d20=inj_d20, injected_damage=inj_dmg,
                                    force=bool(body.get("force")))
         tgt = str(body.get("target", "")).strip().lower().replace(" ", "")

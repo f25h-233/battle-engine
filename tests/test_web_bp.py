@@ -377,3 +377,21 @@ def test_state_payload_new_fields(tmp_path, monkeypatch):
     c = st["combatants"]["星沢羽"]
     assert c["dodging"] is False and c["disengaged"] is False
     assert c["initiative_d20"] is not None
+
+
+def test_action_cast_aoe_radius_fallback(tmp_path, monkeypatch):
+    """cast center 未带 radius → 服务端回退 attack.aoe_radius_ft。"""
+    from battle.core.models import AttackSpec as AS
+    enc = make_encounter(tmp_path)
+    c = enc.combatants["星沢羽"]
+    c.actor.attacks = [AS(name="火球术", kind="spell", save_dc=14, save_stat="dex",
+                          range_ft=(150, 0), damage="8d6", damage_type="火焰",
+                          aoe_radius_ft=20)]
+    P.save_encounter(enc, tmp_path / "campaigns" / "t")
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="cast", actor="星沢羽", attack="火球术",
+                    center=[3, 4], injected={"d20": 5})
+    j = r.get_json()
+    assert r.status_code == 200 and j["ok"]
+    assert "半径 20" in "\n".join(j["lines"])           # 回退生效
+    assert j["state"]["combatants"]["哥布林"]["hp"] < 7
