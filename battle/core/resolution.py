@@ -123,7 +123,7 @@ def resolve_aoo(enc, mover_id: str, attacker_id: str,
     if hit and attack.damage:
         dmg, rolls = dice.roll_dice(attack.damage)
         if roll["crit"]:
-            dmg2, rolls2 = dice.roll_dice("+".join(re.findall(r"\d*d\d+", attack.damage)))
+            dmg2, rolls2 = dice.roll_dice(_dice_part(attack.damage))
             dmg += dmg2
             rolls = rolls + rolls2
         r.add(f"伤害: {attack.damage} → {rolls} = {dmg} {attack.damage_type or ''}")
@@ -165,6 +165,12 @@ def collect_advantage(enc, attacker_id: str, target_id: str,
         disadv = True
         reasons.append("近身敌人威胁（远程劣势）")
     return {"advantage": adv, "disadvantage": disadv, "reasons": reasons}
+
+
+def _dice_part(notation: str) -> str:
+    """Dice notation 的骰子部分（'+' 连接，去掉静态修正）：
+    '1d8+2d6+3' → '1d8+2d6'；暴击翻倍时对这串再掷一次。"""
+    return "+".join(re.findall(r"\d*d\d+", notation))
 
 
 _STATIC_RE = re.compile(r"([+-]\d+)\s*$")
@@ -252,7 +258,7 @@ def resolve_attack(enc, attacker_id: str, target_id: str,
             dmg, rolls = dice.roll_dice(attack.damage)
             crit_note = ""
             if roll["crit"]:
-                dmg2, rolls2 = dice.roll_dice(attack.damage.split("+")[0].split("-")[0])
+                dmg2, rolls2 = dice.roll_dice(_dice_part(attack.damage))
                 dmg += dmg2
                 rolls = rolls + rolls2
                 crit_note = " (暴击翻倍骰)"
@@ -332,6 +338,8 @@ def resolve_spell(enc, caster_id: str, spell_name: str, targets: list,
                    lines=r.lines)
         return r
 
+    if not targets and center is None:
+        raise ActionError("施法需要目标（targets 或 center/radius）")
     if attack is not None:
         # spell attack against a single target（委托 resolve_attack：其内部置 acted）
         tgt = targets[0]
@@ -501,6 +509,7 @@ def resolve_save(enc, target_id: str, dc: int, stat: str,
 def resolve_death_save(enc, combatant_id: str,
                        *, injected_d20: Optional[int] = None) -> ResolutionResult:
     """Death saving throw: 10+ success, 9- failure, 20 → 恢复 1 HP 并苏醒, 1 → 2 failures."""
+    _guard_turn(enc, combatant_id)   # 死亡豁免在自己的回合做
     c = enc.combatants[combatant_id]
     if c.hp > 0:
         raise ActionError(f"{c.id} 尚未倒下")

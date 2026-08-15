@@ -129,6 +129,8 @@ def test_drop_to_zero_triggers_unconscious_and_death_saves():
 
 def test_death_save_success_and_failure():
     enc, cpc, cg1, cg2 = enc_factory()
+    enc.turn_order.remove(cg1.id); enc.turn_order.insert(0, cg1.id)
+    enc.turn_start(cg1.id)
     cg1.hp = 0
     r1 = R.resolve_death_save(enc, cg1.id, injected_d20=10)
     assert r1.ok and cg1.death_saves["successes"] == 1
@@ -142,6 +144,8 @@ def test_death_save_success_and_failure():
 
 def test_death_save_nat20_recovers_hp():
     enc, cpc, cg1, cg2 = enc_factory()
+    enc.turn_order.remove(cg1.id); enc.turn_order.insert(0, cg1.id)
+    enc.turn_start(cg1.id)
     cg1.hp = 0
     cg1.conditions.append("unconscious")
     R.resolve_death_save(enc, cg1.id, injected_d20=20)

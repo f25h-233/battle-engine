@@ -61,6 +61,7 @@ class Combatant:
     conditions: list = field(default_factory=list)
     concentration: Optional[str] = None
     initiative: Optional[int] = None
+    initiative_d20: Optional[int] = None
     acted: bool = False
     bonus_acted: bool = False
     reaction_used: bool = False
@@ -194,6 +195,8 @@ class Encounter:
         if self.status == "combat_active":
             raise ActionError("战斗已在进行中")
         self.assert_combat_ready()
+        if not self.turn_order:
+            raise ActionError("没有战斗员——无法开始战斗（先 add-monster/add-player）")
         self.status = "combat_active"
         self.round = 1
         self.turn_index = 0
@@ -236,6 +239,8 @@ class Encounter:
         entry.setdefault("round", self.round)
         entry.setdefault("actor", self.current().id if self.current() else None)
         self.log.append(entry)
+        if len(self.log) > 200:
+            del self.log[: len(self.log) - 200]
 
     def snapshot(self) -> dict:
         return self.to_dict()
@@ -272,7 +277,8 @@ class Encounter:
             "combatants": {k: {
                 "id": c.id, "x": c.x, "y": c.y, "hp": c.hp, "temp_hp": c.temp_hp,
                 "conditions": c.conditions, "concentration": c.concentration,
-                "initiative": c.initiative, "acted": c.acted,
+                "initiative": c.initiative, "initiative_d20": c.initiative_d20,
+                "acted": c.acted,
                 "bonus_acted": c.bonus_acted, "reaction_used": c.reaction_used,
                 "movement_left_ft": c.movement_left_ft,
                 "dodging": c.dodging, "disengaged": c.disengaged,
@@ -317,6 +323,7 @@ class Encounter:
                           conditions=cd.get("conditions", []),
                           concentration=cd.get("concentration"),
                           initiative=cd.get("initiative"),
+                          initiative_d20=cd.get("initiative_d20"),
                           acted=cd.get("acted", False),
                           bonus_acted=cd.get("bonus_acted", False),
                           reaction_used=cd.get("reaction_used", False),
