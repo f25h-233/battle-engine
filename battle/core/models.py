@@ -20,6 +20,7 @@ class AttackSpec:
     damage_type: Optional[str] = None     # 穿刺/挥砍/钝击/火焰...
     save_dc: Optional[int] = None
     save_stat: Optional[str] = None       # str|dex|con|int|wis|cha
+    aoe_radius_ft: Optional[int] = None   # >0 时该施法为 AoE（面板预览与覆盖判定用）
     note: str = ""
 
     def long_range_ft(self) -> Optional[int]:
@@ -98,6 +99,18 @@ class GridMap:
     def in_range(self, a: Combatant, b: Combatant, range_ft: int) -> bool:
         return self.distance_ft(a, b) <= range_ft
 
+    def cells_in_radius(self, cx: int, cy: int, radius_ft: int) -> list:
+        """圆形覆盖格：格心欧氏距离 ×5 ≤ radius_ft（与 distance_ft 同公式）。"""
+        r = max(0, radius_ft)
+        cells = []
+        for y in range(self.height):
+            for x in range(self.width):
+                dx = (x - cx) * self.grid_size_ft
+                dy = (y - cy) * self.grid_size_ft
+                if int(math.hypot(dx, dy) + 0.5) <= r:
+                    cells.append((x, y))
+        return cells
+
 
 class Encounter:
     """Combat state machine, persisted to <campaign>/battle.json."""
@@ -140,6 +153,9 @@ class Encounter:
             return self.waypoints[name]
         except KeyError:
             raise ActionError(f"未命名地标: {name}（可用 battle waypoint add 定义）")
+
+    def cells_in_radius(self, cx: int, cy: int, radius_ft: int) -> list:
+        return self.map.cells_in_radius(cx, cy, radius_ft)
 
     # ── state gates ─────────────────────────────────────────────
     def assert_combat_ready(self) -> None:
@@ -269,7 +285,8 @@ class Encounter:
                         "name": a.name, "kind": a.kind, "attack_bonus": a.attack_bonus,
                         "range_ft": list(a.range_ft), "damage": a.damage,
                         "damage_type": a.damage_type, "save_dc": a.save_dc,
-                        "save_stat": a.save_stat, "note": a.note,
+                        "save_stat": a.save_stat, "aoe_radius_ft": a.aoe_radius_ft,
+                        "note": a.note,
                     } for a in c.actor.attacks],
                     "conditions": c.actor.conditions,
                 },

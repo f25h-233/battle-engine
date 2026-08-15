@@ -75,6 +75,16 @@ def find_spell(name: str):
     return None
 
 
+_AOE_RADIUS_RE = re.compile(r"(\d+)\s*-?\s*foot-radius")
+
+
+def spell_aoe_radius(spell: dict) -> Optional[int]:
+    """从法术描述散文解析半径（SRD 无结构化 AoE 字段）：
+    '20-foot-radius sphere' → 20；锥形/直线/无 → None（DM 用 --radius 手动给）。"""
+    m = _AOE_RADIUS_RE.search(str(spell.get("description", "")))
+    return int(m.group(1)) if m else None
+
+
 def _dex_mod(dex: int) -> int:
     return (dex - 10) // 2
 

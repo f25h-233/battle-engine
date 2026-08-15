@@ -275,12 +275,62 @@ def resolve_spell(enc, caster_id: str, spell_name: str, targets: list,
                   attack: Optional[AttackSpec] = None,
                   injected_d20: Optional[int] = None,
                   injected_damage: Optional[list] = None,
-                  force: bool = False) -> ResolutionResult:
-    """M1 spell resolution: per-target save (DC) or spell attack roll.
-    Geometry/AoE arrives in M3; M1 resolves an explicit target list."""
+                  force: bool = False,
+                  center: Optional[tuple] = None,
+                  radius_ft: Optional[int] = None,
+                  half_on_save: Optional[bool] = None) -> ResolutionResult:
+    """Spell resolution: per-target save (DC) or spell attack roll;
+    center 给出时走 AoE 路径（覆盖格逐目标豁免、成功豁免半伤）。"""
     _guard_turn(enc, caster_id)
     cast = enc.combatants[caster_id]
-    r = ResolutionResult()
+    r = ResolutionResult()   # AoE 块也要写 r（brief 原文把 r 初始化放在 AoE 块后 → UnboundLocalError，此处提前）
+    if center is not None:
+        # ── AoE 路径：覆盖格逐目标豁免，成功豁免半伤（5e 火球/燃烧之手等）──
+        if attack is not None:
+            dc = dc if dc is not None else attack.save_dc
+            stat = stat if stat else (attack.save_stat or "dex")
+            damage = damage or attack.damage
+            damage_type = damage_type or attack.damage_type
+        radius_ft = radius_ft if radius_ft is not None else 0
+        half = True if half_on_save is None else half_on_save
+        cells = enc.cells_in_radius(*center, radius_ft)
+        victims = [c for c in enc.combatants.values()
+                   if c.hp > 0 and (c.x, c.y) in cells]
+        if not victims:
+            raise ActionError(
+                f"{spell_name} 半径 {radius_ft}ft 内没有存活目标（中心 {center}）")
+        if cast.acted:
+            raise ActionError(f"{cast.id} 本回合已用动作")
+        enc.push_undo()  # 首个状态变更之前
+        r.hp_before = _snapshot_hp(enc, *[v.id for v in victims])
+        r.add(f"施法 {spell_name}（AoE 半径 {radius_ft}ft，中心 {center}，覆盖 {len(cells)} 格）")
+        # 5e 区域伤害规则：掷骰一次、全体共享（半伤同样同值）
+        if damage and injected_damage is not None:
+            dmg_full = sum(injected_damage) + _static_mod(damage)
+            rolls = list(injected_damage)
+        elif damage:
+            dmg_full, rolls = dice.roll_dice(damage)
+        else:
+            dmg_full, rolls = 0, []
+        for v in victims:
+            adv = "advantage" if (v.dodging and stat == "dex") else None
+            d20 = dice.roll_d20(injected=injected_d20, advantage=adv)
+            passed = d20["total"] >= (dc or 10)
+            r.add(f"{v.id} 豁免 {stat} vs DC {dc}: d20({d20['d20']})"
+                  f" + mod = {d20['total']} → {'成功' if passed else '失败'}")
+            if damage and not passed:
+                r.add(f"伤害 {damage} → {rolls} = {dmg_full} {damage_type or ''}")
+                apply_damage(enc, v.id, dmg_full, damage_type)
+            elif damage and passed and half:
+                dmg = dmg_full // 2
+                r.add(f"伤害 {damage} → {rolls} = {dmg}（成功豁免半伤） {damage_type or ''}")
+                apply_damage(enc, v.id, dmg, damage_type)
+        r.hp_after = {v.id: enc.combatants[v.id].hp for v in victims}
+        cast.acted = True
+        enc.record(action="cast", caster=caster_id, spell=spell_name,
+                   center=list(center), radius_ft=radius_ft, targets=[v.id for v in victims],
+                   lines=r.lines)
+        return r
 
     if attack is not None:
         # spell attack against a single target（委托 resolve_attack：其内部置 acted）
