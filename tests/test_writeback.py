@@ -42,6 +42,19 @@ def test_update_sheet_cn(tmp_path):
     assert "- **HP:** 12 / 27 | **临时 HP:** 3" in src
     assert "成功 1 | 失败 2" in src
     assert "950" in src                      # 非目标行不动
+    # HP 行重建后必须带换行，不得与下一行（AC 行）合并（smoke 回归）
+    assert "- **HP:** 12 / 27 | **临时 HP:** 3\n- **AC:** 18" in src
+
+
+def test_rewrite_crlf_hp_line_kept():
+    """CRLF 卡：HP 行重建后跟单个 \r\n，不合并下一行、无双重 \r。
+    直接在 _rewrite 层测（文件级 CRLF 往返依赖平台 newline 翻译，不可移植）。"""
+    crlf = CN_SHEET.replace("\n", "\r\n")
+    new_src, notes = W._rewrite(crlf, hp=12, temp_hp=3,
+                                death_saves={"successes": 1, "failures": 2, "stable": False})
+    assert "- **HP:** 12 / 27 | **临时 HP:** 3\r\n- **AC:** 18" in new_src
+    assert "\r\r\n" not in new_src
+    assert notes == []
 
 
 def test_update_sheet_en(tmp_path):

@@ -43,8 +43,10 @@ def _rewrite(text: str, *, hp: int, temp_hp: int,
     for line in lines:
         m = HP_LINE_RE.match(line)
         if m:
+            # group(7)=(.*)$ 不含换行（`.` 不匹配 \n）：CRLF 文件里是 `\r`，
+            # LF 文件里是空串——补 `\n` 后两种情况分别得 `\r\n` / `\n`，行不合并
             new_lines.append(f"{m.group(1)}{hp}{m.group(3)}{m.group(4)}"
-                             f"{m.group(5)}{temp_hp}{m.group(7)}")
+                             f"{m.group(5)}{temp_hp}{m.group(7)}\n")
             hp_hit = True
             continue
         d = DEATH_LINE_RE.match(line)
