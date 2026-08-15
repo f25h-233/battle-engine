@@ -39,3 +39,25 @@ python3 -m battle state -c my-campaign
 ```bash
 python3 -m pytest -q
 ```
+
+## Web 战斗面板（M2）
+
+玩家面板：浏览器打开 `http://<显示端>:5001/battle/`，选「我是」→ 自己的回合点攻击/点敌方 token 结算；黄色格=移动、蓝格=冲刺（勾选冲刺开关）、红圈=射程内；手动掷勾选后用实体骰输入结果。DM 照旧走 CLI（`battle npc-act` 等），面板自动同步。
+
+### 挂载（一次性）
+1. 设置环境变量 `BATTLE_ENGINE_DIR` 指向本仓库（如 `D:\github\dnd\battle-engine`）
+2. 给显示端打补丁：`python integration/mount_display_app.py`（幂等；**插件更新后重跑**）
+3. 重启显示端 —— 启动日志出现「battle-engine 蓝图已挂载（M2）」
+
+未设置 `BATTLE_ENGINE_DIR` 时显示端行为不变。
+
+### REST（/battle 前缀）
+| 端点 | 说明 |
+|---|---|
+| `GET /battle/` | 面板页面 |
+| `GET /battle/state` | 状态快照（无 undo_stack，日志 ≤50 条） |
+| `POST /battle/action` | 玩家动作：`{"action":"attack|cast|move|dash|dodge|disengage|death_save|end_turn","actor":"…","target":"…","attack":"…","to":[x,y],"injected":{"d20":n,"damage":[..]}}` |
+| `POST /battle/roll` | 服务器掷骰 `{"spec":"1d20|2d6+3","advantage":…}` |
+| `GET /battle/stream` | SSE：状态变化推送（轮询 battle.json mtime） |
+
+战役解析：`BATTLE_CAMPAIGN` 环境变量优先，否则显示端 `.campaign` 运行时文件。LAN 模式 POST 需 `X-DND-Token`（显示端自动注入页面）。
