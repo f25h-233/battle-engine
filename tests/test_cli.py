@@ -47,3 +47,31 @@ def test_npc_act_batch(capsys, tmp_path, monkeypatch):
     out = run_cli("npc-act", "-c", CAMP, "哥布林1:attack 哥布林2; 哥布林2:dash")
     # 若哥布林1 当前回合 → 攻击结算；否则被拒绝。两种都打印结果行
     assert "哥布林1" in out and "哥布林2" in out
+
+
+def test_npc_act_missing_combatant_continues(tmp_path, monkeypatch):
+    """批次中 token 引用的战斗员不存在 → 打印拒绝原因，批次继续后续 token。"""
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "10x8")
+    run_cli("add-monster", "-c", CAMP, "--name", "哥布林1", "--monster", "goblin")
+    run_cli("init", "-c", CAMP)
+    out = run_cli("npc-act", "-c", CAMP, "不存在者:attack 哥布林1; 哥布林1:dodge")
+    assert "不存在者" in out  # 缺失战斗员的拒绝原因被打印
+    assert "哥布林1" in out   # 批次未中断，后续 token 正常结算
+
+
+def test_undo_stack_persistable_after_push(tmp_path, monkeypatch):
+    """Regression: undo_stack 快照曾按引用嵌入自身列表 → push_undo 后 json.dumps
+    Circular reference 崩溃（CLI 每次动作后 _save 即触发）。"""
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "10x8")
+    run_cli("add-player", "-c", CAMP, "--name", "星沢羽", "--ac", "16", "--hp", "17",
+            "--speed", "30", "--dex-mod", "2", "--attack", "短弓:+5:1d6+3:穿刺:80/320")
+    run_cli("place", "-c", CAMP, "--name", "星沢羽", "--x", "0", "--y", "0")
+    run_cli("init", "-c", CAMP)
+    # 结算动作触发 push_undo → cmd_attack 的 _save 立即 json 序列化（修复前在此崩溃）
+    out = run_cli("attack", "-c", CAMP, "--actor", "星沢羽", "--target", "星沢羽",
+                  "--inject", "10")
+    assert "攻击" in out
+    out2 = run_cli("state", "-c", CAMP, "--json")
+    assert '"undo_stack"' in out2

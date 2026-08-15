@@ -284,7 +284,8 @@ def cmd_npc_act(enc: Encounter, spec: str) -> None:
                 print(f"  !! {actor}: 未知动作 {action}")
                 continue
             _print_result(r)
-        except ActionError as e:
+        except (ActionError, KeyError) as e:
+            # KeyError = token 引用的战斗员不存在——打印原因，批次继续其余 token
             print(f"  !! {actor}: {e}")
     _save(enc)
 
