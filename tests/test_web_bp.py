@@ -395,3 +395,34 @@ def test_action_cast_aoe_radius_fallback(tmp_path, monkeypatch):
     assert r.status_code == 200 and j["ok"]
     assert "半径 20" in "\n".join(j["lines"])           # 回退生效
     assert j["state"]["combatants"]["哥布林"]["hp"] < 7
+
+
+# ── M3 回归补全 ───────────────────────────────────────────────────
+
+def test_stream_events_corrupt_file_pushes_error(tmp_path, monkeypatch):
+    """M2 简化面：battle.json 损坏 → SSE 推 error 帧而非静默清空（spec §10）。"""
+    make_encounter(tmp_path)
+    camp_dir = tmp_path / "campaigns" / "t"
+    events = bp._stream_events(camp_dir, interval=0.001)
+    next(events)                                     # 初始状态帧
+    (camp_dir / "battle.json").write_text("{ 坏 json", encoding="utf-8")
+    ev = next(events)
+    assert isinstance(ev, dict) and "损坏" in ev.get("error", "")
+
+
+def test_action_cast_spell_attack_passthrough(tmp_path, monkeypatch):
+    """M2 简化面：cast → spell attack 委托 resolve_attack 时注入透传链完整。"""
+    from battle.core.models import AttackSpec as AS
+    enc = make_encounter(tmp_path)
+    c = enc.combatants["星沢羽"]
+    c.actor.attacks = [AS(name="灼热射线", kind="spell", attack_bonus=5,
+                          range_ft=(120, 0), damage="2d6", damage_type="火焰")]
+    P.save_encounter(enc, tmp_path / "campaigns" / "t")
+    client = make_client(tmp_path, monkeypatch)
+    r = post_action(client, action="cast", actor="星沢羽", target="哥布林",
+                    attack="灼热射线", injected={"d20": 15, "damage": [4, 2]})
+    j = r.get_json()
+    assert r.status_code == 200 and j["ok"]
+    line = "\n".join(j["lines"])
+    assert "注入" in line                     # 伤害注入透传到 resolve_attack
+    assert j["hp_after"]["哥布林"] == 7 - 6   # 4+2 骰面（无静态修正）=6 伤害 → 剩 1
