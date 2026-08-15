@@ -115,8 +115,11 @@ def cmd_place(enc: Encounter, args) -> None:
 
 def cmd_waypoint(enc: Encounter, args) -> None:
     if args.action == "add":
-        enc.add_waypoint(args.name, args.pos)
-        print(f"  地标 {args.name} = {args.pos}")
+        pos = _parse_pos(args.pos)
+        if pos is None:
+            raise ActionError(f"地标位置必须是 (x,y) 坐标: {args.pos}")
+        enc.add_waypoint(args.name, pos)
+        print(f"  地标 {args.name} = {pos}")
     else:
         for k, v in enc.waypoints.items():
             print(f"  {k}: {v}")
@@ -212,7 +215,7 @@ def cmd_set_hp(enc: Encounter, args) -> None:
 
 def cmd_cond(enc: Encounter, args) -> None:
     c = enc.combatants[args.actor.lower().replace(" ", "")]
-    cond = args.condition.lower()
+    cond = (args.condition or "").lower()
     if args.action == "add" and cond not in c.conditions:
         c.conditions.append(cond)
     elif args.action == "remove" and cond in c.conditions:

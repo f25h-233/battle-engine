@@ -129,6 +129,8 @@ class Encounter:
         return c
 
     def add_waypoint(self, name: str, pos: tuple) -> None:
+        if not (isinstance(pos, tuple) and len(pos) == 2):
+            raise ActionError(f"地标位置必须是 (x,y) 坐标: {pos}")
         self.waypoints[name] = pos
 
     def waypoint(self, name: str) -> tuple:

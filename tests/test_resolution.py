@@ -50,6 +50,36 @@ def test_consecutive_undo_rolls_back_each_action():
     assert enc.combatants[cg1.id].hp == hp0               # 历史栈保留 → 第一次也可回滚
 
 
+def test_second_attack_same_turn_rejected():
+    """Important: 攻击必须消耗标准动作——同回合第二次攻击被拒（此前不置 acted）。"""
+    enc, cpc, cg1, cg2 = enc_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    r = R.resolve_attack(enc, cpc.id, cg1.id, BOW, injected_d20=15)
+    assert r.ok and cpc.acted  # 首次攻击成功且消耗动作
+    with pytest.raises(ActionError, match="动作"):
+        R.resolve_attack(enc, cpc.id, cg2.id, BOW, injected_d20=15)
+
+
+def test_miss_sets_hp_after():
+    """Important: miss 时 hp_after 破损——此前只在命中分支赋值，miss 后取键 KeyError。"""
+    enc, cpc, cg1, cg2 = enc_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    r = R.resolve_attack(enc, cpc.id, cg1.id, BOW, injected_d20=1)
+    assert "未命中" in "\n".join(r.lines)
+    assert r.hp_after[cg1.id] == cg1.hp == r.hp_before[cg1.id]
+
+
+def test_dash_out_of_bounds_rejected():
+    """Important: resolve_dash 缺 in_bounds 检查（与 resolve_move 对齐）。"""
+    enc, cpc, cg1, cg2 = enc_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    with pytest.raises(ActionError, match="超出地图"):
+        R.resolve_dash(enc, cpc.id, (50, 50))
+
+
 def test_attack_hit_applies_damage():
     enc, cpc, cg1, cg2 = enc_factory()
     enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)

@@ -89,6 +89,34 @@ def test_undo_rolls_back_attack_hp(tmp_path, monkeypatch):
     assert "没有可回滚的操作" in out  # 栈已空 → 第二次 undo 优雅拒绝
 
 
+def test_waypoint_add_parses_coords_and_move_succeeds(tmp_path, monkeypatch):
+    """Regression: waypoint add 曾把 "12,3" 字符串直接存入 → move --to 门口
+    时 in_bounds(*"12,3") 解包字符串 TypeError 崩溃。"""
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "20x8")
+    run_cli("add-player", "-c", CAMP, "--name", "星沢羽", "--ac", "16", "--hp", "17",
+            "--speed", "30")
+    run_cli("place", "-c", CAMP, "--name", "星沢羽", "--x", "10", "--y", "0")
+    out = run_cli("waypoint", "-c", CAMP, "add", "门口", "12,3")
+    assert "地标" in out and "门口" in out
+    run_cli("init", "-c", CAMP)
+    run_cli("start", "-c", CAMP)
+    out = run_cli("move", "-c", CAMP, "--actor", "星沢羽", "--to", "门口")
+    assert "移动" in out and "(12,3)" in out  # 此前在此 TypeError 崩溃
+
+
+def test_cond_clear_without_condition_value(tmp_path, monkeypatch):
+    """Regression: cond clear 无 condition 参数时 args.condition 为 None
+    → .lower() AttributeError 崩溃。"""
+    monkeypatch.setenv("DND_CAMPAIGN_ROOT", str(tmp_path))
+    run_cli("create", "-c", CAMP, "--map", "10x8")
+    run_cli("add-player", "-c", CAMP, "--name", "星沢羽", "--ac", "16", "--hp", "17")
+    out = run_cli("cond", "-c", CAMP, "add", "星沢羽", "眩晕")
+    assert "眩晕" in out
+    out = run_cli("cond", "-c", CAMP, "clear", "星沢羽")
+    assert "条件" in out and "—" in out
+
+
 def test_undo_stack_persistable_after_push(tmp_path, monkeypatch):
     """Regression: undo_stack 快照曾按引用嵌入自身列表 → push_undo 后 json.dumps
     Circular reference 崩溃（CLI 每次动作后 _save 即触发）。"""

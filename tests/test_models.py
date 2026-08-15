@@ -65,6 +65,13 @@ def test_round_wraps():
     assert enc.current().id == first
 
 
+def test_add_waypoint_rejects_non_coords():
+    """Important: add_waypoint 必须拒绝非 (x,y) 位置（此前存字符串 → 后续解包崩溃）。"""
+    enc, a, _ = make_encounter()
+    with pytest.raises(ActionError, match="坐标"):
+        enc.add_waypoint("门口", "12,3")
+
+
 def test_turn_gate_active_combat():
     enc, a, b = make_encounter()
     ca = enc.add_combatant(a, x=0, y=0)

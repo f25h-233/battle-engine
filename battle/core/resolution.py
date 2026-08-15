@@ -109,6 +109,8 @@ def resolve_attack(enc, attacker_id: str, target_id: str,
     _guard_turn(enc, attacker_id, reaction=False)
     att = enc.combatants[attacker_id]
     tgt = enc.combatants[target_id]
+    if att.acted:
+        raise ActionError(f"{att.id} 本回合已用动作")
     r = ResolutionResult(hp_before=_snapshot_hp(enc, target_id))
 
     if attack is None:
@@ -150,10 +152,11 @@ def resolve_attack(enc, attacker_id: str, target_id: str,
             crit_note = " (暴击翻倍骰)"
         r.add(f"伤害: {attack.damage} → {rolls} = {dmg}{crit_note} {attack.damage_type or ''}")
         apply_damage(enc, target_id, dmg, attack.damage_type, is_crit=roll["crit"])
-        r.hp_after = {target_id: tgt.hp}
         if not tgt.alive:
             r.add(f"{tgt.id} 生命值归零——陷入昏迷，死亡豁免 0/0")
 
+    r.hp_after = {target_id: tgt.hp}  # miss 也记录当前 HP（此前只在命中分支赋值）
+    att.acted = True                  # 标准动作已消耗（此前攻击不置位 → 可无限攻击）
     enc.record(action="attack", attacker=attacker_id, target=target_id,
                attack=attack.name, lines=r.lines)
     return r
@@ -173,12 +176,14 @@ def resolve_spell(enc, caster_id: str, spell_name: str, targets: list,
     r = ResolutionResult()
 
     if attack is not None:
-        # spell attack against a single target
+        # spell attack against a single target（委托 resolve_attack：其内部置 acted）
         tgt = targets[0]
         sub = resolve_attack(enc, caster_id, tgt, attack,
                              injected_d20=injected_d20, force=force)
         sub.lines.insert(0, f"施法 {spell_name}")
         return sub
+    if cast.acted:
+        raise ActionError(f"{cast.id} 本回合已用动作")
     enc.push_undo()  # 豁免路径自己 push（首个状态变更之前）
     r.hp_before = _snapshot_hp(enc, *targets)
     for tid in targets:
@@ -191,6 +196,7 @@ def resolve_spell(enc, caster_id: str, spell_name: str, targets: list,
             apply_damage(enc, tid, dmg, damage_type)
             r.add(f"伤害 {damage} → {rolls} = {dmg} {damage_type or ''}")
     r.hp_after = {tid: enc.combatants[tid].hp for tid in targets}
+    cast.acted = True  # 施法消耗标准动作（豁免路径自己置位）
     enc.record(action="cast", caster=caster_id, spell=spell_name,
                targets=targets, lines=r.lines)
     return r
@@ -226,6 +232,8 @@ def resolve_dash(enc, combatant_id: str, dest) -> ResolutionResult:
     speed = c.actor.speed_ft
     if isinstance(dest, str):
         dest = enc.waypoint(dest)
+    if not enc.map.in_bounds(*dest):
+        raise ActionError(f"目标 ({dest[0]},{dest[1]}) 超出地图")
     dx = (abs(dest[0] - c.x) + abs(dest[1] - c.y)) * enc.map.grid_size_ft
     if dx > speed:
         raise ActionError(f"冲刺移动 {dx}ft 超出速度 {speed}ft")
