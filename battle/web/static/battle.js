@@ -60,7 +60,7 @@ function openStream() {
       else if (d.error) setMsg(d.error, "err");
     } catch (_) { /* 忽略非 JSON 事件 */ }
   };
-  es.onerror = () => setTimeout(openStream, 3000);   // 断线重连
+  es.onerror = () => { es.close(); setTimeout(openStream, 3000); };   // 先 close 再手动重试（避免与原生自动重连叠加）
 }
 
 /* ── 渲染 ────────────────────────────────────────────────────── */
@@ -221,7 +221,7 @@ function renderActions() {
         (a.damage ? ` ${a.damage}` : "");
       btn.title = `射程 ${rng}ft · ${a.damage_type || "—"}` + (a.note ? ` · ${a.note}` : "");
       btn.className = selAttack === a.name ? "primary" : "";
-      btn.disabled = !myTurn();
+      btn.disabled = !myTurn() || who.acted;
       ab.appendChild(btn);
     });
   }
@@ -250,9 +250,131 @@ function renderLog() {
   list.scrollTop = list.scrollHeight;
 }
 
-/* ── 交互（Task 6 填充） ─────────────────────────────────────── */
+/* ── 交互（M2 闭环） ──────────────────────────────────────────── */
 function registerHandlers() {
-  // Task 6 实现：动作按钮/网格格/token 点击、手动掷、冲刺开关
+  // 动作面板：按钮委托（按钮在 renderActions 每次重建，监听器挂在面板上）
+  $("action-panel").addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-action]");
+    if (!btn || btn.disabled) return;
+    const name = btn.dataset.name;
+    const act = btn.dataset.action;
+    if (act === "attack" || act === "cast") {
+      selAttack = name;
+      const tgt = selected && S.combatants[selected];
+      if (tgt && tgt.id !== identity && tgt.hp > 0) {
+        postAction(act, { target: tgt.id, attack: name });
+      } else {
+        setMsg(`已选 ${name} —— 点击敌方 token 结算`, "ok");
+        renderGrid();
+      }
+    } else if (act === "end_turn") {
+      postAction("end_turn", {});
+    } else {
+      postAction(act, {});
+    }
+  });
+  // 网格：token 点击优先，其次格点击（事件委托，DOM 重建不丢监听）
+  $("grid").addEventListener("click", (ev) => {
+    const t = ev.target.closest(".token");
+    if (t) { tokenClick(t.dataset.id); return; }
+    const cell = ev.target.closest(".grid-cell");
+    if (cell) cellClick(parseInt(cell.dataset.x, 10), parseInt(cell.dataset.y, 10));
+  });
+  // 冲刺 / 手动掷开关
+  $("dash-toggle").addEventListener("change", (e) => {
+    dashMode = e.target.checked;
+    renderGrid();
+  });
+  $("manual-dice").addEventListener("change", (e) => {
+    manualDice = e.target.checked;
+    try { localStorage.setItem("battle-manual", manualDice ? "1" : "0"); } catch (_) {}
+    $("manual-dice-box").hidden = !manualDice;
+  });
+  // 手动掷 d20 输入限 1–20（服务端注入校验归 M3）
+  $("inject-d20").addEventListener("input", (e) => {
+    const v = parseInt(e.target.value, 10);
+    if (isNaN(v)) return;
+    if (v > 20) e.target.value = 20;
+    if (v < 1) e.target.value = 1;
+  });
+}
+
+function tokenClick(id) {
+  const tgt = S.combatants[id];
+  if (!tgt) return;
+  selected = id;
+  const who = me();
+  if (who && myTurn() && id !== identity && tgt.hp > 0 && selAttack) {
+    const atk = (who.attacks || []).find((a) => a.name === selAttack);
+    if (atk) {
+      const rng = atk.range_ft[1] || atk.range_ft[0];
+      const d = dist(who, tgt);
+      if (d <= rng) {
+        postAction(atk.kind === "spell" ? "cast" : "attack",
+                   { target: id, attack: selAttack });
+        return;
+      }
+      setMsg(`目标 ${tgt.name}: ${d}ft，超出 ${atk.name} 射程 ${rng}ft`, "err");
+    }
+  }
+  renderGrid();   // 纯查看：更新选中高亮与信息
+}
+
+function cellClick(x, y) {
+  const who = me();
+  if (!who || !myTurn() || busy) return;
+  const occ = Object.values(S.combatants).find((c) => c.x === x && c.y === y && c.hp > 0);
+  if (occ) { setMsg(`该格被 ${occ.name} 占据`, "err"); return; }
+  if (dashMode) postAction("dash", { to: [x, y] });
+  else postAction("move", { to: [x, y] });
+}
+
+function postAction(action, extra) {
+  if (busy) return;
+  busy = true;
+  const body = Object.assign({ action, actor: identity }, extra);
+  if (manualDice) {
+    const d20v = parseInt($("inject-d20").value, 10);
+    const dmg = parseDmg($("inject-damage").value);
+    const inj = {};
+    if (!isNaN(d20v)) inj.d20 = d20v;
+    if (dmg) inj.damage = dmg;
+    if (Object.keys(inj).length) body.injected = inj;
+  }
+  setMsg("结算中…", "");
+  api("/battle/action", body).then((r) => {
+    busy = false;
+    if (r.ok) {
+      S = r.state;
+      render();
+      flashRoll(r.lines);
+    } else {
+      setMsg(r.error || "动作被拒绝", "err");
+      if (r.state) { S = r.state; render(); }
+    }
+  }).catch(() => { busy = false; setMsg("网络错误", "err"); });
+}
+
+function parseDmg(text) {
+  const parts = String(text || "").split(/[,，\s]+/)
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n >= 1 && n <= 20);
+  return parts.length ? parts : null;
+}
+
+function flashRoll(lines) {
+  // “掷骰 → 结果即上屏”：从结算行提取 d20 值，右上角短暂闪现骰子结果
+  const m = (lines || []).map((l) => l.match(/d20\((\d+)\)/)).filter(Boolean)[0];
+  if (!m) return;
+  const chip = document.createElement("div");
+  chip.id = "dice-chip";
+  chip.textContent = `🎲 d20 = ${m[1]}`;
+  document.body.appendChild(chip);
+  requestAnimationFrame(() => { chip.style.opacity = "1"; });
+  setTimeout(() => {
+    chip.style.opacity = "0";
+    setTimeout(() => chip.remove(), 350);
+  }, 1200);
 }
 
 /* ── 启动 ────────────────────────────────────────────────────── */
