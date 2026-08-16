@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import sys
 from pathlib import Path
 
@@ -27,10 +28,13 @@ from .core import dice, monster_parser, persistence as P, resolution as R, srd
 from .core import writeback as W
 from .core.models import ActionError, Actor, AttackSpec, Encounter
 
-def _campaign_dir(name: str) -> Path:
+def _campaign_root() -> Path:
     # 每次调用读取 env（而非导入期绑定）：测试用 monkeypatch DND_CAMPAIGN_ROOT 才不会失效
-    root = Path(os.environ.get("DND_CAMPAIGN_ROOT", str(Path.home() / ".claude" / "dnd")))
-    d = root / "campaigns" / name
+    return Path(os.environ.get("DND_CAMPAIGN_ROOT", str(Path.home() / ".claude" / "dnd")))
+
+
+def _campaign_dir(name: str) -> Path:
+    d = _campaign_root() / "campaigns" / name
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -371,6 +375,30 @@ def cmd_recover(args) -> None:
     print(f"  已从 .bak 恢复战斗（状态 {enc.status}，{len(enc.combatants)} 名战斗员）")
 
 
+def cmd_serve(args) -> int:
+    try:
+        from .web import serve as web_serve
+    except ImportError as e:
+        print(f"!! 缺少 Web 依赖（{e}）——安装: pip install battle-engine[web]",
+              file=sys.stderr)
+        return 1
+    token = args.token or secrets.token_hex(16)
+    campaign_file = ""
+    if args.campaign:
+        rt = _campaign_root() / ".runtime"
+        rt.mkdir(parents=True, exist_ok=True)
+        campaign_file = rt / ".campaign"
+        campaign_file.write_text(args.campaign, encoding="utf-8")
+    try:
+        web_serve.run_server(host=args.host, port=args.port, token=token,
+                             campaign_file=str(campaign_file) if campaign_file else "")
+    except OSError as e:
+        print(f"!! 无法启动服务: {e}——端口被占用时用 --port 换端口",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
 # ── parser ───────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -486,6 +514,11 @@ def build_parser() -> argparse.ArgumentParser:
     s = c("end", "结束战斗（自动回写人物卡 HP/临时HP/死亡豁免）")
     s.add_argument("--award-xp", action="store_true", help="汇总已消灭 NPC 的 XP 平分给存活 PC 并回写经验值行")
     c("recover", "从 .bak 恢复战斗")
+    s = c("serve", "独立服务模式：起 Web 面板（默认 LAN + 自动 token）")
+    s.add_argument("--host", default="0.0.0.0",
+                   help="绑定地址（默认 0.0.0.0=局域网；仅本机用 --host 127.0.0.1）")
+    s.add_argument("--port", type=int, default=5001, help="端口（默认 5001，被占用时换）")
+    s.add_argument("--token", help="固定 token（缺省自动生成并打印；页面自动带上）")
     return p
 
 
@@ -494,6 +527,8 @@ def main(argv=None) -> int:
     if not args.cmd:
         build_parser().print_help()
         return 1
+    if args.cmd == "serve":
+        return cmd_serve(args)      # serve 不需要 enc、且无 -c 也可起
     # recover 也走统一分发（其缺 -c 的 ActionError 需要被 try 捕获）
     if not args.campaign and args.cmd != "recover":
         print("错误: 缺少 -c/--campaign", file=sys.stderr)
