@@ -1,8 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "battle-engine"
-version = "0.3.0"
-description = "D&D 5e combat engine — resolution core + CLI"
+version = "0.4.0"
+description = "D&D 5e combat engine — resolution core + CLI + web panel"
 requires-python = ">=3.10"
+
+[project.scripts]
+battle = "battle.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["battle*"]
+
+[tool.setuptools.package-data]
+"battle.web" = ["templates/*.html", "static/*.js", "static/*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
