@@ -76,3 +76,38 @@ python3 -m pytest -q
 | 端点 | 说明 |
 |---|---|
 | `POST /battle/action` | 新增 `{"action":"undo"}`；cast 支持 `center:[x,y]` + `radius` |
+## M4：独立服务模式 + 打包（2026-08-16）
+
+不依赖 skill/显示端，单独起引擎给玩家用面板：
+
+```bash
+python -m battle serve                  # 默认 LAN（0.0.0.0:5001）+ 自动 token
+python -m battle serve -c 战役名        # 指定战役（写 .runtime/.campaign）
+python -m battle serve --port 5002 --host 127.0.0.1   # 换端口 / 仅本机
+python -m battle serve --token 固定值   # 固定 token（curl/脚本用）
+```
+
+启动后打印玩家面板地址（本机 + 局域网）与 POST 令牌。浏览器打开
+`http://<本机IP>:5001/battle/` 即玩家面板——页面自动带上 token，朋友无需配置。
+POST /action 与 /roll 校验 `X-DND-Token`（未带/错误 → 401）。**换战役**：带 `-c`
+重启 serve，或改 `<DND_CAMPAIGN_ROOT>/.runtime/.campaign` 后重启。**端口占用**：
+报错并提示换端口（不静默换）。
+
+### 打包（wheel）
+
+```bash
+python -m pip install build
+python -m build                          # 产出 dist/battle_engine-0.4.0-py3-none-any.whl
+pip install dist/battle_engine-0.4.0-py3-none-any.whl[web]    # 含 Flask
+battle serve                             # 装完后 battle 命令直接可用
+python -m battle serve                   # 或模块方式
+```
+
+wheel 内含 Web 面板（templates/static）；不带 `[web]` extra 时 serve 命令会提示安装。
+
+### M4 简化面（记录在案）
+- **TLS**：serve 是 HTTP（LAN 内 token 保护 POST）。需要 HTTPS 请用显示端 `--tls`
+  （挂载模式），或后续给 serve 加 `--tls`。
+- **设备审批**：serve 不做设备审批（显示端功能）。token 已保护写操作，页面读取对 LAN 内开放。
+- **token 不持久化**：重启生成新 token（`--token` 可固定）。显示端 token 持久化在 `.runtime`。
+- 单进程 Flask 开发服务器（LAN 小规模足够；大批量并发非目标）。
