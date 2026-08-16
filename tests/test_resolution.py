@@ -196,3 +196,26 @@ def test_ranged_attack_adjacent_enemy_disadvantage():
     # cg2 在 5ft 内 → 远程攻击劣势
     assert not adv["advantage"] and adv["disadvantage"]
     assert any("近身" in reason for reason in adv["reasons"])
+
+
+def test_move_after_action_allowed():
+    """5e: 移动与动作独立——用动作（攻击）后仍可移动剩余移动力（此前 acted 误作移动门）。"""
+    enc, cpc, cg1, cg2 = enc_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    r = R.resolve_attack(enc, cpc.id, cg1.id, BOW, injected_d20=15)
+    assert r.ok and cpc.acted                      # 动作已用
+    r2 = R.resolve_move(enc, cpc.id, (0, 1))       # 5ft，在剩余移动力内
+    assert r2.ok and (cpc.x, cpc.y) == (0, 1)
+    assert cpc.movement_left_ft == 25              # 移动力照常扣减
+
+
+def test_move_after_dash_rejected_by_speed():
+    """dash 是动作且移动力清零——dash 后 move 应被移动力拒绝（而非 acted 门）。"""
+    enc, cpc, cg1, cg2 = enc_factory()
+    enc.turn_order.remove(cpc.id); enc.turn_order.insert(0, cpc.id)
+    enc.turn_start(cpc.id)
+    R.resolve_dash(enc, cpc.id, (3, 0))
+    assert cpc.movement_left_ft == 0
+    with pytest.raises(ActionError, match="移动"):
+        R.resolve_move(enc, cpc.id, (0, 1))

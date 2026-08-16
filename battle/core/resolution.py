@@ -390,8 +390,8 @@ def resolve_move(enc, combatant_id: str, dest, *, force: bool = False) -> Resolu
     dx = (abs(dest[0] - c.x) + abs(dest[1] - c.y)) * enc.map.grid_size_ft
     if not force and dx > c.movement_left_ft:
         raise ActionError(f"移动 {dx}ft 超出剩余移动力 {c.movement_left_ft}ft")
-    if c.acted:
-        raise ActionError(f"{c.id} 本回合已用动作")
+    # 5e：移动与动作独立——用动作（攻击/施法）后仍可移动剩余移动力；
+    # 动作资源由 resolve_attack/cast/dash 各自的 acted 门管理，移动只看移动力。
     enc.push_undo()  # 首个状态变更之前（移动 + 途中所有 AoO 作为一个 undo 单元）
     r = ResolutionResult(hp_before={combatant_id: c.hp})
     if not c.disengaged:
