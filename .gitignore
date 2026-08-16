@@ -4,3 +4,6 @@ __pycache__/
 *.json.bak
 .venv/
 .test-campaigns/
+dist/
+build/
+*.egg-info/
