@@ -192,7 +192,7 @@ function paintOverlays() {
       if (m === 0) continue;
       const cell = g.querySelector(`.grid-cell[data-x="${x}"][data-y="${y}"]`);
       if (!cell) continue;
-      if (dashMode) { if (m <= dash) cell.classList.add("dash-cell"); }
+      if (dashMode && !who.acted) { if (m <= dash) cell.classList.add("dash-cell"); }
       else if (m <= walk) cell.classList.add("reachable");
     }
   const atk = selAttack ? (who.attacks || []).find((a) => a.name === selAttack) : null;
@@ -268,7 +268,13 @@ function renderActions() {
   }
   mb.innerHTML += `<button data-action="end_turn" class="primary" ` +
     `${myTurn() ? "" : "disabled"}>结束回合</button>`;
-  $("dash-toggle").disabled = !myTurn();
+  // 冲刺是标准动作：动作已用（攻击/施法后）冲刺非法——自动取消冲刺模式并禁用开关，
+  // 否则蓝格仍高亮、点击报「本回合已用动作」，用户误以为移动坏了（5e：移动≠动作）
+  if (who && who.acted && dashMode) {
+    dashMode = false;
+    $("dash-toggle").checked = false;
+  }
+  $("dash-toggle").disabled = !myTurn() || (!!who && who.acted);
 }
 
 function renderLog() {
